@@ -1,0 +1,6 @@
+/build*/
+/_Build/
+/datasets/
+/runs/
+*.user
+/.vs/

@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "mode": "header_probe",
+  "wave_size": 32,
+  "host_subgroup_size": 32
+}

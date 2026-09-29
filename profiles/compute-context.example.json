@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "mode": "context_snapshot",
+  "stage": "CS",
+  "wave_size": 64,
+  "host_subgroup_size": 32,
+  "user_data": [0, 0, 0, 0],
+  "compute": {
+    "threads": [64, 1, 1],
+    "lds_size_dwords": 0,
+    "scratch_size_dwords": 0,
+    "group_id": [true, false, false],
+    "thread_ids_num": 1,
+    "workgroup_register": 4,
+    "tg_size_en": false,
+    "float_mode": 192
+  },
+  "memory": [
+    {"base": "0x100000000", "words": [0, 0, 0, 0]}
+  ]
+}
