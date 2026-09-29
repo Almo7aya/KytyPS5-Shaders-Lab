@@ -17,6 +17,6 @@ Before distributing a worker binary, collect and comply with **all** notices fro
 checkout/build, and provide corresponding source where required. This table is not a replacement
 for those upstream distribution obligations. `libwinpthread-1.dll` retains its own license.
 
-The extraction implementation is original C++ informed by public format layouts and the supplied
-extractor's observable matching approach. It does not embed the prebuilt private batch compiler.
+The extraction implementation is original C++ informed by format research and reference-tool
+behavior. It does not embed or redistribute a third-party batch compiler.
 ps5rs is a research reference, not a linked/runtime dependency. No Rust code is required.

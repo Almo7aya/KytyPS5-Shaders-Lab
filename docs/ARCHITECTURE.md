@@ -114,6 +114,37 @@ The implemented tool reaches level 5. Levels 6–7 remain future work. A validat
 module cannot prove the implementation of an RDNA instruction, ordering, precision, lane behavior,
 or resource address translation is correct. This distinction must survive every report/dashboard.
 
+## Report evidence model
+
+`src/report.cpp` joins manifest cases to results by the complete case ID. Cases without results
+remain untested; unmatched run entries are counted as a dataset/run mismatch instead of included
+in the success denominator. The report does not invoke the compiler, infer semantic equivalence,
+or convert an unknown worker status into a pass.
+
+The C++ generator embeds full diagnostic details and source provenance as HTML-safe JSON alongside
+the static UI from `src/report_ui.hpp`. The report is a self-contained offline HTML file: no server,
+account, upload or publishing service is involved. Embedded data escapes HTML delimiters, replaces
+invalid UTF-8 in logs and preserves origin offsets as hexadecimal strings to avoid JavaScript
+integer precision loss. Dynamic text is HTML-escaped before rendering. A content security policy
+blocks external resources/network requests. Artifact links use a fixed filename allowlist,
+canonical containment under the run's `cases` tree and URL-encoded paths.
+
+Reports are diagnostic artifacts, not anonymized exports. They do not alter source manifests,
+results or captures. Keep generated evidence out of the source repository and use synthetic or
+generic examples in project documentation.
+
+The UI uses a fixed-row-height virtualized list: every filtered case has a scroll position, while
+only the visible rows plus a small buffer exist in the DOM. There are no page boundaries or
+load-more actions. Selection is independent of the rendered window; keyboard navigation can reach
+the entire filtered set. Filtering and sorting retain selection when it remains a match.
+
+An on-demand tabbed inspector preserves the active evidence category across case changes, avoiding
+nested disclosures or constructing every shader's evidence DOM at startup. Source findings have a
+searchable list and a directly visible record pane. A phase
+checkpoint means the phase started; later checkpoints establish advancement, not instruction-level
+semantic correctness. Existing artifacts can survive an earlier retry and are not used as verdicts.
+Elapsed time is worker-process wall time; a cached result retains its original attempt duration.
+
 ## Extending the tool
 
 Add format adapters with a declared input contract, per-layer provenance, explicit expanded-size

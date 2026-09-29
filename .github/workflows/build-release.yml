@@ -1,0 +1,165 @@
+name: Build and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      kyty_repository:
+        description: 'Kyty repository (owner/repository); only official KytyPS5/KytyPS5 builds publish releases'
+        required: true
+        default: KytyPS5/KytyPS5
+        type: string
+      kyty_ref:
+        description: 'Branch, tag or commit; leave blank for the latest default-branch commit'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve compiler source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      repository: ${{ steps.source.outputs.repository }}
+      revision: ${{ steps.source.outputs.revision }}
+      official: ${{ steps.source.outputs.official }}
+    steps:
+      - name: Resolve requested repository and ref to one immutable commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KYTY_REPOSITORY: ${{ inputs.kyty_repository }}
+          KYTY_REF: ${{ inputs.kyty_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$KYTY_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo 'Expected a public GitHub repository in owner/repository form.' >&2
+            exit 1
+          fi
+          info=$(gh api "repos/$KYTY_REPOSITORY")
+          if [[ $(jq -r '.private' <<< "$info") != false ]]; then
+            echo 'Only public compiler repositories are supported.' >&2
+            exit 1
+          fi
+          repository=$(jq -r '.full_name' <<< "$info")
+          ref="$KYTY_REF"
+          if [[ -z "$ref" ]]; then ref=$(jq -r '.default_branch' <<< "$info"); fi
+          encoded_ref=$(jq -rn --arg ref "$ref" '$ref | @uri')
+          revision=$(gh api "repos/$repository/commits/$encoded_ref" --jq '.sha')
+          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+          official=false
+          if [[ "${repository,,}" == kytyps5/kytyps5 ]]; then official=true; fi
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "official=$official" >> "$GITHUB_OUTPUT"
+          echo "Compiler: $repository at $revision" >> "$GITHUB_STEP_SUMMARY"
+          echo "Publish release after successful tests: $official" >> "$GITHUB_STEP_SUMMARY"
+
+  linux:
+    name: Linux extraction and report tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Configure standalone build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows x64 with Kyty worker
+    needs: resolve
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check out resolved KytyPS5 sources
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ needs.resolve.outputs.repository }}
+          ref: ${{ needs.resolve.outputs.revision }}
+          path: _Build/KytyPS5
+          submodules: recursive
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+      - name: Install shader build tools
+        run: |
+          $vcpkgRoot = Split-Path (Get-Command vcpkg).Source
+          vcpkg install 'glslang[tools,opt]:x64-windows'
+          if ($LASTEXITCODE -ne 0) { throw 'glslang installation failed' }
+          "$vcpkgRoot/installed/x64-windows/tools/glslang" >> $env:GITHUB_PATH
+      - name: Configure source-linked build
+        run: >-
+          cmake -S . -B build-release -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER=
+          -DKYTY_ROOT="${{ github.workspace }}/_Build/KytyPS5"
+          -DSHADER_LAB_BUILD_KYTY_WORKER=ON
+      - name: Build scanner, worker and tests
+        run: cmake --build build-release --target shader-lab shader-kyty-worker shader-lab-tests --parallel 2
+      - name: Test including real compiler integration
+        run: ctest --test-dir build-release -R '^shader_lab_' --output-on-failure
+      - name: Package binaries, notices and corresponding sources
+        env:
+          KYTY_REPOSITORY: ${{ needs.resolve.outputs.repository }}
+        run: ./scripts/package-windows.ps1 -BuildDirectory build-release -KytyRoot _Build/KytyPS5 -OutputDirectory _Build/artifacts -KytyRepository $env:KYTY_REPOSITORY
+      - name: Save release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-x64-release
+          path: _Build/artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Save test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-test-logs
+          path: build-release/Testing/Temporary/*.log
+          if-no-files-found: ignore
+
+  release:
+    name: Publish official compiler build
+    if: needs.resolve.outputs.official == 'true'
+    needs: [resolve, linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-x64-release
+          path: artifacts
+      - name: Verify bundle and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+          PROJECT_REVISION: ${{ github.sha }}
+          KYTY_REVISION: ${{ needs.resolve.outputs.revision }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum --check SHA256SUMS
+          # A unique tag per run/attempt prevents overwriting previous releases.
+          gh release create "$RELEASE_TAG" ./* --target "$PROJECT_REVISION" \
+            --title "Shader Lab $RELEASE_TAG (Kyty ${KYTY_REVISION:0:12})" \
+            --notes "Official KytyPS5/KytyPS5 compiler commit: $KYTY_REVISION. Shader Lab commit: $PROJECT_REVISION. Synthetic integration tests passed; semantic shader equivalence is not tested. See BUILD-INFO.json and the corresponding source archives for provenance."

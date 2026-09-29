@@ -10,8 +10,10 @@ Valid SPIR-V is a structural result under recorded inputs. It does not prove equ
 memory writes, numerical behavior, synchronization, or performance. Every result explicitly says
 `semantic_correctness: not_tested`.
 
-See [validation results](docs/VALIDATION.md) for the tested corpora and exact outcome
-counts, and [architecture](docs/ARCHITECTURE.md) for the data and worker contracts.
+See [testing and validation](docs/VALIDATION.md) for reproducible checks and their limits,
+and [architecture](docs/ARCHITECTURE.md) for the data and worker contracts.
+See [builds and releases](docs/RELEASING.md) for manual builds, fork selection, releases,
+packaged binaries, checksums and corresponding sources.
 
 ## What is implemented
 
@@ -23,7 +25,7 @@ counts, and [architecture](docs/ARCHITECTURE.md) for the data and worker contrac
   Candidate bytes must be backed by actual segments, not zero-filled holes.
 - Independently framed Zstandard payload discovery when built with the Kyty worker dependencies.
   Declared-size, decompression-budget and candidate limits protect against oversized inputs.
-- Existing `.header` / `.code` pairs from the supplied batch tool, without requiring Python.
+- Existing `.header` / `.code` pairs, without requiring Python.
 - SHA-256 identity for **both header and code**, plus Kyty-compatible XXH3-64 code hashes.
   Different headers are never collapsed just because their code hashes match. All origins are retained.
 - Content-verified incremental scanning; changed extractor sources invalidate cached parsing.
@@ -49,9 +51,9 @@ already-unpacked data where necessary. No decryption keys, DRM bypass or game re
 
 The worker currently does **not** reproduce `AgcCreateShader`, complete PM4 state, `PrepareProgram`,
 fetch-table construction, shader fusion or full NGG/mesh/tessellation setup. Such stages are decoded
-but normally report `missing_stage_context`. It is not yet a feature-for-feature replacement for
-every stage supported by the older batch binary. Its stronger parts are traceability, corpus identity,
-clear SELF handling, failure isolation and direct linkage to the selected current compiler.
+but normally report `missing_stage_context`. Full stage coverage remains future work. The current
+focus is traceability, corpus identity, clear SELF handling, failure isolation and direct linkage
+to the selected compiler.
 
 Pixel probe defaults and zero user-data are assumptions, not captured game state. A failure under
 those assumptions is a **reproduction candidate**, not automatically an emulator bug. Unavailable
@@ -66,10 +68,11 @@ dependency downloads/build generators (including its Python-based SPIR-V build t
 application, extraction, orchestration and test code in this repository is C++; no Python runtime
 or extraction script is used by the application.
 
-From this project directory:
+From this project directory, with a KytyPS5 checkout in the sibling `../KytyPS5` directory
+(adjust `KYTY_ROOT` for your checkout):
 
 ```powershell
-cmake -S . -B build-kyty -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DKYTY_ROOT="Z:/projects/PS5/src/leaning-something/KytyPS5" -DSHADER_LAB_BUILD_KYTY_WORKER=ON
+cmake -S . -B build-kyty -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DKYTY_ROOT="../KytyPS5" -DSHADER_LAB_BUILD_KYTY_WORKER=ON
 cmake --build build-kyty --target shader-lab shader-kyty-worker shader-lab-tests --parallel 8
 ctest --test-dir build-kyty -R '^shader_lab_' --output-on-failure
 ```
@@ -83,7 +86,7 @@ Subsequent compiler edits rebuild incrementally. The selected checkout's source 
 For a lightweight extraction/reporting-only build:
 
 ```powershell
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER=clang-cl -DSHADER_LAB_DEPS="Z:/projects/PS5/src/leaning-something/KytyPS5/3rdparty"
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER=clang-cl
 cmake --build build --parallel 8
 ctest --test-dir build --output-on-failure
 ```
@@ -100,7 +103,7 @@ compilation should fail visibly instead of silently switching to an older compil
 ## Scan your games and compile the corpus
 
 ```powershell
-.\build-kyty\shader-lab.exe scan --input "D:\PS5_Games" --output datasets/all-games
+.\build-kyty\shader-lab.exe scan --input "inputs" --output datasets/all-games
 .\build-kyty\shader-lab.exe run --dataset datasets/all-games --worker build-kyty/shader-kyty-worker.exe --output runs/current --jobs 4 --timeout-ms 30000
 .\build-kyty\shader-lab.exe report --dataset datasets/all-games --results runs/current/results.json --output runs/current/report.html
 .\build-kyty\shader-lab.exe cluster --results runs/current/results.json --output runs/current/failures.json
@@ -129,8 +132,8 @@ are cached too; use a changed timeout or `--no-resume` to retry them.
 ## Investigate and compare
 
 ```powershell
-.\build-kyty\shader-lab.exe inspect --dataset datasets/all-games --hash 9000dc4bca87a4a2 --output runs/shader-origin.json
-.\build-kyty\shader-lab.exe correlate --dataset datasets/all-games --log "D:\captured-kyty.log" --output runs/runtime-coverage.json
+.\build-kyty\shader-lab.exe inspect --dataset datasets/all-games --hash KYTY_HASH --output runs/shader-origin.json
+.\build-kyty\shader-lab.exe correlate --dataset datasets/all-games --log "captures/emulator.log" --output runs/runtime-coverage.json
 .\build-kyty\shader-lab.exe compare --before runs/before/results.json --after runs/after/results.json --output runs/compiler-diff.json
 ```
 
@@ -146,6 +149,51 @@ To investigate a result, use its `artifacts` path in `results.json`. Start with 
 the case ID in the manifest for its original file, offsets, offset coordinate system and evidence.
 Offsets in a reconstructed ELF or decompressed frame are deliberately not labeled as physical
 offsets in the original game file.
+
+## Reading the HTML report
+
+Open `report.html` directly in a browser; it is self-contained and makes no network requests.
+After updating the tool, regenerate existing HTML with `report` to get the new layout. This reads
+the manifest/results and does **not** rerun shaders or alter their verdicts.
+
+Reports retain full source provenance, diagnostic text, captured profiles and artifact links for
+offline investigation. No account, server, upload or publishing service is involved. Generated
+reports and captures are excluded from version control; documentation examples use generic inputs.
+
+The dashboard separates structurally valid modules, blocked/unsupported cases, failed attempts,
+and semantic verification (not performed). The valid-SPIR-V percentage uses cases with recorded
+results as its denominator; it is **not a correctness or game-compatibility score**. Summary counts
+remain corpus-wide while the explorer filters by outcome, header stage, game/source group or text.
+Results can be sorted by attention needed, hash, worker duration or code size. All matches are
+available in one continuously scrollable list, without pagination or a load-more button. The list
+renders only the visible rows to keep large corpora responsive. Use Up/Down or Home/End while the
+list is focused; **Find selected** returns to the current shader without changing the selection.
+
+The inspector has six direct-access tabs: **Overview**, **Diagnostics**, **Context**, **Sources**,
+**Artifacts** and **Raw data**. Overview surfaces the verdict, recommended next step, key failure
+and compiler progress. Logs, profiles and source evidence are visible directly in their respective
+tabs, without nested collapsible panels. The active tab and selected shader are preserved while
+comparing cases or changing filters, whenever the selected shader still matches. Tab headers also
+support Left/Right and Home/End keyboard navigation.
+
+Select a shader to see:
+
+- A plain-language verdict, its limits and a recommended next investigation step.
+- Compiler phase progress; markers mean execution reached a phase, not that its semantics passed.
+- Instruction/IR/output sizes, elapsed process time, exit code and cached-result reuse.
+- Validator diagnostics, unsupported instruction PCs, fatal messages and worker log tails.
+- Selected profiles, returned assumptions, effective compute state and compiler fingerprints.
+- Source origins, offsets, pairing evidence and the complete header+code identity.
+- Links to available disassembly, CFG, IR, memory-read traces and SPIR-V artifacts.
+
+Artifact links are relative where possible. Keep the run files in place; moving only the
+HTML preserves embedded evidence but can break those links. Existing files may survive a failed
+retry, so their presence alone is not proof that the latest attempt produced them. File findings,
+traversal failures, partial scans/runs and results absent from the selected manifest are disclosed.
+Unknown outcome codes are never treated as passes. Extracted cases without results remain untested.
+
+Reports contain diagnostic evidence and source paths. Review their contents and redistribution
+rights before sharing them; the tool does not transmit them anywhere.
 
 ## Profiles and real context
 
@@ -219,15 +267,13 @@ prewarm game pipelines or prove that all runtime specializations have been compi
 
 ## Project boundaries and references
 
-This directory is an independent Git repository. Its parent learning repository locally excludes it.
-Move the whole directory (including hidden `.git`) later; reconfigure into a **fresh build directory**
-with the new `KYTY_ROOT` rather than reusing absolute-path CMake caches. Dataset origins are relative
-to their recorded root; compiled case artifacts are local and ignored by Git. Review licensing and
-remove private captures before sharing anything. No remote is configured automatically.
+Build directories, datasets and generated runs are excluded from version control. When moving a
+checkout, configure a **fresh build directory** with the appropriate `KYTY_ROOT` rather than
+reusing absolute-path CMake caches. Do not contribute proprietary shader captures or generated
+artifacts without the necessary redistribution rights.
 
-Inspired by [ps5rs](https://github.com/claimore22/ps5rs) and the supplied shader batch package.
-AGC extraction evidence was cross-checked against its `extract_shaders.py` and Kyty's shader structs;
-SELF mapping against Kyty `src/loader/elf.{h,cpp}` and
+Inspired by [ps5rs](https://github.com/claimore22/ps5rs). AGC extraction is checked against Kyty's
+shader structures; SELF mapping against Kyty `src/loader/elf.{h,cpp}` and
 [ps5rs constants](https://github.com/claimore22/ps5rs/blob/master/crates/ps5-format/src/self_constants.rs).
 Application source is GPL-2.0-only, compatible with the source-linked Kyty worker; dependencies retain
 their own licenses. See `LICENSE` and `THIRD_PARTY.md`.

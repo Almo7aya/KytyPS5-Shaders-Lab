@@ -203,48 +203,4 @@ json compare(const fs::path &before, const fs::path &after) {
     }
     return r;
 }
-void report(const fs::path &dataset, const fs::path &results, const fs::path &output) {
-    auto d = read_json(dataset / "manifest.json");
-    json r = results.empty() ? json::object() : read_json(results);
-    std::string h =
-        "<!doctype html><meta charset=utf-8><title>PS5 Shader Lab</title><style>body{font:15px "
-        "system-ui;background:#121823;color:#e0e6f0;margin:2rem}input{padding:.6rem;width:70%}"
-        "table{border-collapse:collapse;width:100%}td,th{border:1px solid "
-        "#42536a;padding:.5rem;text-align:left;vertical-align:top}code{word-break:break-all}.note{"
-        "padding:1rem;background:#253249}</style><h1>PS5 Shader Lab</h1><p class=note>Offline "
-        "extraction / compiler regression evidence. SPIR-V validation is not semantic correctness. "
-        "Compressed, encrypted and dynamically generated shaders may be absent.</p>";
-    h += "<p>Files: " + std::to_string(d["files"].size()) +
-         " · Unique header+code cases: " + std::to_string(d["shaders"].size()) +
-         " · Scan limited: " + d["limited"].dump() +
-         "</p><input id=q placeholder='Filter by game, hash, stage or "
-         "outcome'><table><thead><tr><th>Game / source</th><th>Kyty hash / "
-         "stage</th><th>Outcome</th><th>Evidence</th></tr></thead><tbody>";
-    for (auto it = d["shaders"].begin(); it != d["shaders"].end(); ++it) {
-        auto &s = it.value();
-        std::string sources, evidence;
-        for (const auto &o : s["origins"]) {
-            sources += o["game"].get<std::string>() + " / " + o["file"].get<std::string>() +
-                       " @0x" + hex(o["header_offset"].get<uint64_t>()) + "\n";
-            evidence += o["method"].get<std::string>() + " ";
-        }
-        auto status = r.contains("results") && r["results"].contains(it.key())
-                          ? r["results"][it.key()].value("status", "unknown")
-                          : "not tested";
-        h += "<tr><td>" + html_escape(sources) + "</td><td><code>" +
-             html_escape(s["kyty_hash"].get<std::string>()) + "</code> " +
-             html_escape(s["type"].get<std::string>()) + "</td><td>" + html_escape(status) +
-             "</td><td>" + html_escape(evidence) + "</td></tr>";
-    }
-    h += "</tbody></table><h2>Coverage gaps / rejected candidates</h2><pre>";
-    for (auto it = d["files"].begin(); it != d["files"].end(); ++it)
-        if (it.value().value("status", "") != "scanned" ||
-            !it.value().value("findings", json::array()).empty())
-            h += html_escape(it.key() + ": " + it.value().dump()) + "\n";
-    h += html_escape(d.value("traversal_errors", json::array()).dump(2)) +
-         "</pre><script>document.querySelector('#q').addEventListener('input',e=>{const "
-         "q=e.target.value.toLowerCase();document.querySelectorAll('tbody "
-         "tr').forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(q))})</script>";
-    write_text(output, h);
-}
 } // namespace sl

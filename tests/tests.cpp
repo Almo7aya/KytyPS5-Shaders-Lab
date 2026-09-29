@@ -216,6 +216,75 @@ int main(int argc, char **argv) {
         test(f["status_counts"]["worker_crash_or_error"] == 1, "failed worker isolation");
         report(root / "dataset", root / "run/results.json", root / "report.html");
         test(fs::file_size(root / "report.html") > 500, "HTML report");
+        auto report_data = [&](const fs::path &file) {
+            auto bytes = read_bytes(file);
+            std::string html(bytes.begin(), bytes.end());
+            const std::string marker = "<script id=report-data type=application/json>";
+            auto start = html.find(marker);
+            check(start != std::string::npos, "embedded report data exists");
+            start += marker.size();
+            return std::pair{
+                html, json::parse(html.substr(start, html.find("</script>", start) - start))};
+        };
+        auto [html, report_doc] = report_data(root / "report.html");
+        test(report_doc["cases"].size() == 1, "report retains dataset cases");
+        test(!report_doc["cases"][0]["artifacts"].empty(), "report links available artifacts");
+        test(html.find("Rendering / semantic correctness is unverified for every case") !=
+                 std::string::npos,
+             "report prominently discloses correctness limit");
+        test(html.find("<details") == std::string::npos,
+             "report does not hide evidence in disclosures");
+        test(html.find("id=\"previous\"") == std::string::npos &&
+                 html.find("id=\"next\"") == std::string::npos,
+             "report has no pagination controls");
+        test(html.find("role=\"listbox\"") != std::string::npos &&
+                 html.find("role=\"tablist\"") != std::string::npos,
+             "report includes accessible continuous list and evidence tabs");
+        report(root / "dataset", {}, root / "extraction-only.html");
+        auto extraction_report = report_data(root / "extraction-only.html").second;
+        test(!extraction_report["has_run"].get<bool>() &&
+                 extraction_report["cases"][0]["result"].empty(),
+             "extraction-only reports do not fabricate verdicts");
+        auto adversarial = d;
+        auto id = adversarial["shaders"].begin().key();
+        const std::string hostile = "</script><script>alert('report injection')</script>&\"";
+        adversarial["shaders"][id]["origins"][0]["file"] = hostile;
+        adversarial["shaders"][id]["origins"][0]["header_offset"] = UINT64_MAX;
+        atomic_json(root / "dataset/manifest.json", adversarial);
+        auto hostile_result = f;
+        hostile_result["results"][id]["log_tail"] = hostile;
+        hostile_result["results"][id]["artifacts"] = "../../outside";
+        hostile_result["results"]["unrelated-case"] = {{"status", "spirv_valid_under_profile"}};
+        atomic_json(root / "run/report-fixture.json", hostile_result);
+        report(root / "dataset", root / "run/report-fixture.json", root / "hostile.html");
+        auto [safe_html, safe_data] = report_data(root / "hostile.html");
+        test(safe_html.find(hostile) == std::string::npos,
+             "embedded report data cannot close script element");
+        test(safe_data["cases"][0]["result"]["log_tail"] == hostile,
+             "escaped diagnostics round-trip");
+        test(safe_data["cases"][0]["artifacts"].empty(), "out-of-run artifact paths suppressed");
+        test(safe_data["orphan_results"] == 1, "mismatched run cases counted separately");
+        test(safe_data["cases"][0]["shader"]["origins"][0]["header_offset"] == "0xffffffffffffffff",
+             "report offsets retain uint64 precision");
+        write_text(root / "run/cases/space # quote'/worker.log", "fixture");
+        hostile_result["results"][id]["artifacts"] = "cases/space # quote'";
+        hostile_result["results"][id]["log_tail"] = std::string("invalid utf8: ") + char(0xff);
+        atomic_json(root / "run/report-fixture.json", hostile_result);
+        report(root / "dataset", root / "run/report-fixture.json", root / "encoded-links.html");
+        auto encoded = report_data(root / "encoded-links.html").second;
+        auto href = encoded["cases"][0]["artifacts"][0]["href"].get<std::string>();
+        test(href.find("space%20%23%20quote%27/worker.log") != std::string::npos,
+             "artifact URL encodes spaces and markup delimiters");
+        test(encoded["cases"][0]["result"]["log_tail"].get<std::string>().find("\xef\xbf\xbd") !=
+                 std::string::npos,
+             "non-UTF8 worker diagnostics rendered with replacement");
+        auto empty_manifest = d;
+        empty_manifest["shaders"] = json::object();
+        empty_manifest["files"] = json::object();
+        atomic_json(root / "dataset/manifest.json", empty_manifest);
+        report(root / "dataset", {}, root / "empty.html");
+        test(report_data(root / "empty.html").second["cases"].empty(), "empty report generation");
+        atomic_json(root / "dataset/manifest.json", d);
         test(cluster(root / "run/results.json")["groups"].size() == 1, "failure grouping");
         test(compare(root / "run/results.json", root / "run/results.json")["changes"].empty(),
              "identical regression comparison");
