@@ -22,6 +22,12 @@ index. Extents and optional SHA-256 digests are checked before using decoded blo
 Rejected/encrypted SELF data also has no raw fallback. The adapter does not authenticate
 signed executables or decrypt them.
 `process.cpp` owns OS process/handle lifetime; it never invokes a shell.
+`execution.cpp` validates compute fixture byte/state identity, snapshots initial resources and
+reference evidence, invokes an explicitly selected execution backend and compares its returned
+outputs. This is a distinct protocol from compiler requests. The backend cannot override reference
+layout or tolerance rules; GPU selection requires explicit opt-in. See [EXECUTION.md](EXECUTION.md).
+Process containment is not a security sandbox, and reference/model independence remains external
+evidence rather than a property the harness can authenticate.
 `run.cpp` owns worker scheduling, per-case identity, checkpoints, results and comparisons.
 `repro.cpp` owns portable single-case export and fresh replay. It binds both input hashes,
 the selected profile and original result; archived diagnostics are never execution inputs.
@@ -185,7 +191,9 @@ upstream's `xxhash` target for shader identities; no substitute hash implementat
 6. **Execute against a reference:** inputs and observable outputs agree under a specified contract.
 7. **Game integration:** actual resource lifetime, synchronization, graphics state and visible results agree.
 
-The implemented tool reaches level 5. Levels 6–7 remain future work. A validator accepting a
+The shipped compiler reaches level 5. An isolated protocol now supports external execution and
+comparison for level 6, but real backends and trusted reference data remain required; the current
+protocol test double is not level-6 conformance evidence. Level 7 remains future work. A validator accepting a
 module cannot prove the implementation of an RDNA instruction, ordering, precision, lane behavior,
 or resource address translation is correct. This distinction must survive every report/dashboard.
 

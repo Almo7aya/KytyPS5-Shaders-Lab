@@ -90,6 +90,16 @@ json run(const RunOptions &options);
 // Worker isolation and per-case cache semantics are inherited from run().
 json campaign(const RunOptions &options, const fs::path &plan);
 json verify_reference(const fs::path &reference, const fs::path &observed);
+struct ExecuteOptions {
+    fs::path fixture, reference, worker, output;
+    uint64_t timeout_ms = 30000;
+    std::string backend_kind = "cpu";
+    bool allow_gpu = false;
+};
+// Validates and hashes actual fixture files. Does not execute a backend.
+json execution_fixture_identity(const fs::path &fixture);
+// Executes only the explicitly selected trusted backend, then compares reference outputs.
+json execute_fixture(const ExecuteOptions &options);
 json export_repro(const fs::path &dataset, const fs::path &results,
                   const std::string &id, const fs::path &output);
 json replay_repro(const fs::path &bundle, const fs::path &worker,

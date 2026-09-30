@@ -7,6 +7,8 @@
 #endif
 using namespace sl;
 unsigned reference_tests(const fs::path &root);
+unsigned execution_tests(const fs::path &root, Bytes header, const fs::path &worker);
+int execution_fixture_worker(const fs::path &request);
 unsigned archive_tests(Bytes shader);
 unsigned repro_tests(const fs::path &root, Bytes shader, const fs::path &worker);
 unsigned minimize_tests(const fs::path &root, Bytes header, const fs::path &worker);
@@ -69,6 +71,8 @@ std::vector<uint8_t> elf() {
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 3 && std::string(argv[1]) == "--execute-fixture")
+            return execution_fixture_worker(path_from(argv[2]));
         if (argc == 2 && std::string(argv[1]) == "--compiler-info") {
             std::cout << json{{"pass_catalog", compiler_pass_catalog()}}.dump();
             return 0;
@@ -297,6 +301,7 @@ int main(int argc, char **argv) {
              "non-Windows workers retain the requested working directory");
 #endif
         checks += repro_tests(root / "repro-fixtures", b, exe);
+        checks += execution_tests(root / "execution-fixtures", header(), exe);
         checks += minimize_tests(root / "minimize-fixtures", header(), exe);
         checks += pass_tests(root / "pass-fixtures", header(), exe);
         RunOptions options{root / "dataset", root / "run", exe, profile, 2, 5000, 0, true};

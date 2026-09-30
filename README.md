@@ -44,6 +44,9 @@ packaged binaries, checksums and corresponding sources.
   profiles, optional supplied user-data and bounded memory snapshots.
 - Explicit pixel compiler metadata including barycentric/custom interpolation, export channel
   mappings, sample masks and dual-source/alpha-remap blending, with every default disclosed.
+- An isolated compute-fixture execution protocol for explicitly selected trusted backends,
+  hash-verified initial resources, reference-output comparison and an explicit GPU opt-in gate.
+  An actual ISA/GPU execution backend and trusted reference corpus are still required.
 - Captured compute SH-register/PM4 replay through the selected upstream register decoder
   and `PrepareProgram`, with required-state checks and per-write provenance.
 - Guest disassembly, instruction inventory, opcode histogram, CFG text/JSON/DOT, intermediate/final IR,
@@ -488,6 +491,21 @@ intermediate-state predicates or reference execution; ordinary output comparison
 
 ## Outcomes
 
+### Isolated execution fixtures
+
+`fixture-info` derives an identity from actual shader/header/profile/resource bytes.
+`execute-fixture` snapshots known inputs, invokes an explicitly selected execution backend in a
+fresh child process, validates its response, and compares buffers/images with an independently
+supplied reference record. Guest wave/EXEC, workgroup/dispatch dimensions, bindings, initial
+resource bytes and comparison policies are recorded. GPU backends require both `--backend-kind gpu`
+and `--allow-gpu`; scanning and compiler runs never opt in automatically.
+
+See [the complete execution protocol](docs/EXECUTION.md) for fixture/worker schemas, budgets,
+reference provenance, commands, results and isolation limits. The shipped compiler worker is
+**not an execution backend**. Current execution fixtures use a protocol test double: they validate
+orchestration and comparison, not ISA semantics or GPU conformance. Independent reference data,
+real execution backends and graphics replay remain open milestone work.
+
 ### Recorded reference-output comparison
 
 `verify` is the output-comparison component of the reference-execution milestone.
@@ -594,7 +612,8 @@ The worker now has a smaller compiler-library source/link boundary, pass traces 
 assertion-prefix bisection; standalone upstream configuration and semantic pass bisection
 are still open.
 ZIP32 and compressed clear SELF
-adapters, nested payload budgets and reference-output comparison are added
+adapters, nested payload budgets, reference-output comparison and the isolated execution-fixture
+protocol are added
 components of milestones 2 and 3; neither milestone is complete. Bounded captured compute
 preparation and explicit pixel compiler metadata are implemented as parts of milestone 1;
 graphics preparation/partner and host-feature coverage

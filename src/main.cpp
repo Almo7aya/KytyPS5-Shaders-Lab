@@ -14,12 +14,15 @@ void usage() {
   shader-lab correlate --dataset DATASET --log EMULATOR_LOG --output trace.json
   shader-lab cluster --results RUN/results.json --output failures.json
   shader-lab verify --reference JSON --observed JSON --output comparison.json
+  shader-lab fixture-info --fixture JSON --output NEW_JSON
+  shader-lab execute-fixture --fixture JSON --reference JSON --worker EXE --output NEW_DIRECTORY [--timeout-ms N] [--backend-kind cpu|gpu] [--allow-gpu]
   shader-lab repro --dataset DATASET --results RUN/results.json --case CASE_ID --output NEW_BUNDLE
   shader-lab replay --bundle BUNDLE --worker EXE --output NEW_RUN [--timeout-ms N]
   shader-lab minimize --bundle BUNDLE --worker EXE --output NEW_DIRECTORY [--max-attempts N] [--confirmations N] [--timeout-ms N]
   shader-lab bisect-passes --bundle BUNDLE --worker EXE --output NEW_DIRECTORY [--confirmations N] [--timeout-ms N]
 Scan recursively inspects all regular files, not just eboot.bin. Game files are read-only.
-No guest execution. No decryption. Unsupported containers need prior unpacking.
+Scanning/compilation do not execute guest programs. Fixture execution requires an explicit backend.
+No decryption. Unsupported containers need prior unpacking. GPU fixture execution requires --allow-gpu.
 Compiler success and valid SPIR-V do NOT prove rendering/semantic correctness.
 )";
 }
@@ -33,6 +36,7 @@ int main(int argc, char **argv) {
         std::string command = argv[1];
         std::map<std::string, std::string> args;
         bool resume = true;
+        bool allow_gpu = false;
         const std::map<std::string, std::set<std::string>> allowed = {
             {"scan", {"--input", "--output", "--max-files", "--max-file-mb"}},
             {"run",
@@ -45,6 +49,8 @@ int main(int argc, char **argv) {
             {"correlate", {"--dataset", "--log", "--output"}},
             {"cluster", {"--results", "--output"}},
             {"verify", {"--reference", "--observed", "--output"}},
+            {"fixture-info", {"--fixture", "--output"}},
+            {"execute-fixture", {"--fixture", "--reference", "--worker", "--output", "--timeout-ms", "--backend-kind"}},
             {"repro", {"--dataset", "--results", "--case", "--output"}},
             {"replay", {"--bundle", "--worker", "--output", "--timeout-ms"}},
             {"minimize", {"--bundle", "--worker", "--output", "--timeout-ms", "--max-attempts", "--confirmations"}},
@@ -53,6 +59,10 @@ int main(int argc, char **argv) {
             throw std::runtime_error("unknown command");
         for (int i = 2; i < argc; ++i) {
             std::string k = argv[i];
+            if (k == "--allow-gpu" && command == "execute-fixture" && !allow_gpu) {
+                allow_gpu = true;
+                continue;
+            }
             if (k == "--no-resume" && (command == "run" || command == "scan" || command == "campaign")) {
                 resume = false;
                 continue;
@@ -151,6 +161,19 @@ int main(int argc, char **argv) {
             auto result = sl::verify_reference(path("--reference"), path("--observed"));
             sl::atomic_json(output, result);
             return result["status"] == "match" ? 0 : 4;
+        }
+        if (command == "fixture-info") {
+            auto output = path("--output");
+            if (sl::fs::exists(output))
+                throw std::runtime_error("fixture-info requires a fresh output file");
+            sl::atomic_json(output, sl::execution_fixture_identity(path("--fixture")));
+        }
+        if (command == "execute-fixture") {
+            auto result = sl::execute_fixture({path("--fixture"), path("--reference"), path("--worker"),
+                path("--output"), number("--timeout-ms", 30000),
+                args.contains("--backend-kind") ? args.at("--backend-kind") : "cpu", allow_gpu});
+            std::cout << result.dump(2) << "\n";
+            return result.at("status") == "match" ? 0 : 4;
         }
         return 0;
     } catch (const std::exception &ex) {

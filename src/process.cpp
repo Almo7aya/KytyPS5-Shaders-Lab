@@ -127,8 +127,8 @@ ProcessResult process(const fs::path &executable, const std::vector<std::string>
     GetExitCodeProcess(proc, &code);
     result.exit_code = code;
 #else
-    // No shell and no guest executable launch. The child executes only the selected compiler
-    // worker.
+    // No shell and no guest executable launch. The child executes only the explicitly
+    // selected compiler or fixture backend. This is process containment, not a security sandbox.
     std::vector<std::string> owned{path_text(executable)};
     owned.insert(owned.end(), args.begin(), args.end());
     std::vector<char *> argv;

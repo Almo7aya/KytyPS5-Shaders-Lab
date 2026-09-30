@@ -36,6 +36,11 @@ is added; use the test output from your build as the authoritative result.
 - Multi-context campaigns, per-context resume, invalid plans and context-dependent failures.
 - Exact recorded output comparisons, float32 policies, image layouts, identity mismatches
   and evidence containment. These are comparator tests, not GPU conformance tests.
+- Isolated execution protocol with verified initial buffers/images, guest wave/EXEC and dispatch
+  forwarding, fresh attempts, durable receipts, reference identity, malformed/stale responses,
+  output-set/hash/size checks, path containment, input-mutation detection and process deadlines.
+  The GPU opt-in test uses a protocol test double and never creates a device. It proves the
+  application gate, not GPU isolation, shader execution or oracle independence.
 - Duplicate origins, incremental scan reuse and shader-hash lookup.
 - Worker protocol, resumable results, failure isolation and timeout termination.
 - Portable repro relocation/replay, selected-profile identity, fresh attempts, overwrite
@@ -103,8 +108,10 @@ A structurally valid SPIR-V module does not prove equivalent output, memory beha
 semantics, synchronization or game compatibility. Probe profiles may omit real runtime state;
 failures under those assumptions are investigation leads rather than confirmed emulator bugs.
 
-Recorded reference-output comparison is implemented, but reference execution and GPU dispatch
-are not. Repro replay invokes the compiler, not a GPU or the original game. Bounded captured compute
+Recorded reference-output comparison and an external-backend execution harness are implemented,
+but real ISA/GPU execution backends and trusted reference corpora are not yet supplied. The
+execution test double is only protocol evidence. Repro replay invokes the compiler, not a GPU
+or the original game. Bounded captured compute
 state replay is supported, but full PM4/state replay, all graphics
 stages, arbitrary archive decoding and semantic equivalence remain outside the current coverage.
 Generated SPIR-V is not a directly importable emulator pipeline cache.
