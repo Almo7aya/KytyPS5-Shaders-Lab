@@ -34,7 +34,7 @@ are not supported.
 ## What runs
 
 - Ubuntu builds and tests the standalone extraction/reporting application.
-- Windows x64 builds the application and real Kyty compiler worker, then runs all
+- After the standalone checks pass, Windows x64 builds the application and real Kyty compiler worker, then runs all
   `shader_lab_` tests, including synthetic shader translation and SPIR-V validation.
 - Packaging smoke-tests the packaged CLI and compiler worker, gathers notices and
   corresponding sources, and generates SHA-256 checksums.

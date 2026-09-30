@@ -54,13 +54,10 @@ unsigned minimize_tests(const fs::path &root, Bytes input_header, const fs::path
         }
         test(rejected, name);
     };
-    json signature_row = {
-        {"status", "unsupported_instruction"},
-        {"details",
-         {{"last_phase", "decode"},
-          {"unsupported",
-           json::array(
-               {{{"family", "fixture"}, {"opcode_id", 1}, {"text", "original diagnostic"}}})}}};
+    json signature_row = {{"status", "unsupported_instruction"},
+                          {"details", {{"last_phase", "decode"}}}};
+    signature_row["details"]["unsupported"] = json::array({
+        {{"family", "fixture"}, {"opcode_id", 1}, {"text", "original diagnostic"}}});
     auto original_signature = failure_signature(signature_row);
     test(!original_signature.is_null(), "detailed unsupported instruction has a predicate");
     signature_row["details"]["unsupported"][0]["text"] = "different diagnostic";

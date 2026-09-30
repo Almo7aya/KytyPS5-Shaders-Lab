@@ -76,7 +76,7 @@ jobs:
 
   windows:
     name: Windows x64 with Kyty worker
-    needs: resolve
+    needs: [resolve, linux]
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
