@@ -12,12 +12,13 @@ ctest --test-dir build --output-on-failure
 ctest --test-dir build-kyty -R '^shader_lab_' --output-on-failure
 ```
 
-The extraction-only build registers two tests. The source-linked build adds a real compiler test:
+The standalone build registers three tests. The source-linked build adds a real compiler test:
 
 | Test | Coverage |
 | --- | --- |
 | `shader_lab_unit` | Binary parsers, hashes, provenance, resume, subprocess isolation and report generation |
 | `shader_lab_help` | CLI startup and documented options |
+| `shader_lab_cpu_reference` | Fixture suite plus independent integer CPU execution, fixed output vectors and unsupported-state checks |
 | `shader_lab_real_kyty` | Fixture suite plus a synthetic compute shader translated by Kyty and validated with SPIRV-Tools |
 
 The integration invocation repeats fixture checks; reported check counts are not additive.
@@ -41,6 +42,10 @@ is added; use the test output from your build as the authoritative result.
   output-set/hash/size checks, path containment, input-mutation detection and process deadlines.
   The GPU opt-in test uses a protocol test double and never creates a device. It proves the
   application gate, not GPU isolation, shader execution or oracle independence.
+- Actual independent CPU interpretation of a synthetic integer/global-buffer program, wave32/64,
+  masked/empty EXEC, fixed arithmetic/bitwise boundary vectors, undefined/pending register checks,
+  memory bounds, conflicting accesses and truncated programs. Linux CI independently assembles
+  the kernel with LLVM's GFX10.3 assembler. These do not certify RDNA hardware behavior.
 - Duplicate origins, incremental scan reuse and shader-hash lookup.
 - Worker protocol, resumable results, failure isolation and timeout termination.
 - Portable repro relocation/replay, selected-profile identity, fresh attempts, overwrite
@@ -109,8 +114,9 @@ semantics, synchronization or game compatibility. Probe profiles may omit real r
 failures under those assumptions are investigation leads rather than confirmed emulator bugs.
 
 Recorded reference-output comparison and an external-backend execution harness are implemented,
-but real ISA/GPU execution backends and trusted reference corpora are not yet supplied. The
-execution test double is only protocol evidence. Repro replay invokes the compiler, not a GPU
+with a separate bounded CPU integer backend and fixed golden vectors. Broader ISA/GPU execution
+and trusted hardware reference corpora are not yet supplied. The execution test double is only
+protocol evidence. Repro replay invokes the compiler, not a GPU
 or the original game. Bounded captured compute
 state replay is supported, but full PM4/state replay, all graphics
 stages, arbitrary archive decoding and semantic equivalence remain outside the current coverage.

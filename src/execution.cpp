@@ -79,15 +79,13 @@ void description(const json &value) {
         value.get_ref<const std::string &>().size() > 4096)
         throw std::runtime_error("execution descriptions require 1..4096 bytes");
 }
-struct Fixture {
-    json identity, execution, resources, profile, source;
-    std::vector<uint8_t> header, code, profile_bytes;
-    std::map<std::string, std::vector<uint8_t>> bytes;
+struct Fixture : ExecutionInputs {
+    json source;
+    std::vector<uint8_t> profile_bytes;
 };
-Fixture load_fixture(const fs::path &file) {
-    const auto root = file.parent_path();
+Fixture load_fixture(const fs::path &root, const json &source) {
     Fixture f;
-    f.source = bounded_json(file);
+    f.source = source;
     keys(f.source, {"schema", "kind", "id", "shader", "profile", "execution", "resources"});
     if (number(f.source.at("schema")) != 1 || f.source.at("kind") != "shader_lab_execution_fixture")
         throw std::runtime_error("unsupported execution fixture schema");
@@ -169,7 +167,7 @@ Fixture load_fixture(const fs::path &file) {
         metadata.erase("file");
         metadata["bytes"] = bytes.size();
         f.resources[it.key()] = metadata;
-        f.bytes.emplace(it.key(), std::move(bytes));
+        f.resource_bytes.emplace(it.key(), std::move(bytes));
     }
     if (!outputs)
         throw std::runtime_error("execution needs at least one observable output");
@@ -183,6 +181,9 @@ Fixture load_fixture(const fs::path &file) {
         {"exec_mask", mask}};
     return f;
 }
+Fixture load_fixture(const fs::path &file) {
+    return load_fixture(file.parent_path(), bounded_json(file));
+}
 void disjoint(const fs::path &out, const fs::path &input) {
     if (is_within(out, input) || is_within(input, out))
         throw std::runtime_error("execution output must not overlap input evidence or worker");
@@ -191,6 +192,57 @@ void disjoint(const fs::path &out, const fs::path &input) {
 
 json execution_fixture_identity(const fs::path &fixture) {
     return load_fixture(fs::canonical(fixture)).identity;
+}
+
+ExecutionInputs read_execution_request(const fs::path &request_path) {
+    const auto file = fs::canonical(request_path),
+               root = fs::canonical(file.parent_path() / "inputs");
+    const auto request = bounded_json(file);
+    keys(request, {"schema", "kind", "fixture", "execution", "header", "code", "profile",
+                   "resources", "output", "backend_kind", "allow_gpu"});
+    if (number(request.at("schema")) != 1 || request.at("kind") != "shader_lab_execution_request" ||
+        !request.at("allow_gpu").is_boolean())
+        throw std::runtime_error("invalid execution backend request");
+    if (!is_within(root, file.parent_path()))
+        throw std::runtime_error("execution snapshots escape attempt directory");
+    auto relative = [&](const json &path) {
+        const auto resolved = fs::canonical(path_from(path.get<std::string>()));
+        if (!is_within(resolved, root) || !fs::is_regular_file(resolved))
+            throw std::runtime_error("backend input is outside the snapshot directory");
+        return path_text(fs::relative(resolved, root));
+    };
+    json resources = request.at("resources");
+    for (auto it = resources.begin(); it != resources.end(); ++it) {
+        keys(it.value(), {"file", "sha256", "access", "kind", "type", "shape", "binding",
+                          "guest_address", "bytes"});
+        it.value()["file"] = relative(it.value().at("file"));
+        it.value().erase("bytes");
+    }
+    const auto &identity = request.at("fixture");
+    auto profile_path = relative(request.at("profile"));
+    json source = {
+        {"schema", 1},
+        {"kind", "shader_lab_execution_fixture"},
+        {"id", identity.at("id")},
+        {"shader",
+         {{"header",
+           {{"file", relative(request.at("header"))}, {"sha256", identity.at("header_sha256")}}},
+          {"code",
+           {{"file", relative(request.at("code"))}, {"sha256", identity.at("shader_sha256")}}}}},
+        {"profile",
+         {{"file", profile_path},
+          {"sha256", sha256(read_bytes(root / path_from(profile_path), json_limit))}}},
+        {"execution", request.at("execution")},
+        {"resources", resources}};
+    auto fixture = load_fixture(root, source);
+    if (nlohmann::json(fixture.identity) != nlohmann::json(identity))
+        throw std::runtime_error("backend snapshot identity mismatch");
+    auto metadata = request.at("resources");
+    for (auto it = metadata.begin(); it != metadata.end(); ++it)
+        it.value().erase("file");
+    if (nlohmann::json(metadata) != nlohmann::json(fixture.resources))
+        throw std::runtime_error("backend resource metadata mismatch");
+    return std::move(static_cast<ExecutionInputs &>(fixture));
 }
 
 json execute_fixture(const ExecuteOptions &options) {
@@ -273,7 +325,7 @@ json execute_fixture(const ExecuteOptions &options) {
         unsigned index = 0;
         for (auto it = resources.begin(); it != resources.end(); ++it, ++index) {
             const auto path = out / "inputs" / (std::to_string(index) + ".bin");
-            protect(path, fixture.bytes.at(it.key()));
+            protect(path, fixture.resource_bytes.at(it.key()));
             it.value()["file"] = path_text(path);
         }
         index = 0;

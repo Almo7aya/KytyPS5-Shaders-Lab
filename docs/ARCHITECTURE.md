@@ -28,6 +28,9 @@ outputs. This is a distinct protocol from compiler requests. The backend cannot 
 layout or tolerance rules; GPU selection requires explicit opt-in. See [EXECUTION.md](EXECUTION.md).
 Process containment is not a security sandbox, and reference/model independence remains external
 evidence rather than a property the harness can authenticate.
+`cpu_reference.cpp` is a separate bounded integer ISA interpreter, linked only to the common
+fixture/file utilities. It does not use Kyty's compiler/decoder as an oracle. Its supported subset,
+undefined-state and memory-order limits are documented in [CPU_REFERENCE.md](CPU_REFERENCE.md).
 `run.cpp` owns worker scheduling, per-case identity, checkpoints, results and comparisons.
 `repro.cpp` owns portable single-case export and fresh replay. It binds both input hashes,
 the selected profile and original result; archived diagnostics are never execution inputs.
@@ -192,8 +195,9 @@ upstream's `xxhash` target for shader identities; no substitute hash implementat
 7. **Game integration:** actual resource lifetime, synchronization, graphics state and visible results agree.
 
 The shipped compiler reaches level 5. An isolated protocol now supports external execution and
-comparison for level 6, but real backends and trusted reference data remain required; the current
-protocol test double is not level-6 conformance evidence. Level 7 remains future work. A validator accepting a
+comparison for level 6, and a separate CPU integer model executes curated fixtures. Broader
+independently validated backends and trusted reference coverage remain required; the protocol test
+double is not level-6 conformance evidence. Level 7 remains future work. A validator accepting a
 module cannot prove the implementation of an RDNA instruction, ordering, precision, lane behavior,
 or resource address translation is correct. This distinction must survive every report/dashboard.
 

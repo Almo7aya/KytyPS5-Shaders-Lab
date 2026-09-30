@@ -36,10 +36,12 @@ are not supported.
 
 ## What runs
 
-- Ubuntu builds and tests the standalone extraction/reporting application.
-- After the standalone checks pass, Windows x64 builds the application and real Kyty compiler worker, then runs all
-  `shader_lab_` tests, including synthetic shader translation and SPIR-V validation.
-- Packaging smoke-tests the packaged CLI and compiler worker, gathers notices and
+- Ubuntu builds and tests the standalone extraction/reporting application and independent
+  CPU reference backend. LLVM's GFX10.3 assembler cross-checks the integer fixture encoding.
+- After the standalone checks pass, Windows x64 builds the application, independent CPU
+  backend and real Kyty compiler worker, then runs all `shader_lab_` tests, including
+  integer execution fixtures, synthetic shader translation and SPIR-V validation.
+- Packaging smoke-tests the packaged CLI, CPU backend and compiler worker, gathers notices and
   corresponding sources, and generates SHA-256 checksums.
 - The Windows bundle is uploaded as `windows-x64-release` and retained for 14 days.
   Official builds dispatched from Shader Lab `main` additionally attach the same
@@ -54,7 +56,7 @@ semantic equivalence.
 
 | Asset | Contents |
 | --- | --- |
-| `ps5-shader-lab-windows-x64.zip` | Scanner, compiler worker, required pthread DLL, profiles, documentation, dependency notices and `BUILD-INFO.json` |
+| `ps5-shader-lab-windows-x64.zip` | Scanner, compiler worker, independent CPU reference backend, required pthread DLL, profiles, documentation, dependency notices and `BUILD-INFO.json` |
 | `ps5-shader-lab-sources.tar.gz` | Tracked project sources, exact Kyty checkout including recursive submodules, and CMake-fetched dependency sources |
 | `ffmpeg-source-windows-x64.tar.gz` | Upstream's corresponding patched FFmpeg sources, build configuration and recipes, verified against upstream's checksums |
 | `SHA256SUMS` | SHA-256 checksums for all three archives |

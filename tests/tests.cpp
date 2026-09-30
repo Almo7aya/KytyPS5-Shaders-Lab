@@ -8,6 +8,7 @@
 using namespace sl;
 unsigned reference_tests(const fs::path &root);
 unsigned execution_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned cpu_tests(const fs::path &root, Bytes header, const fs::path &worker);
 int execution_fixture_worker(const fs::path &request);
 unsigned archive_tests(Bytes shader);
 unsigned repro_tests(const fs::path &root, Bytes shader, const fs::path &worker);
@@ -462,6 +463,8 @@ int main(int argc, char **argv) {
         fs::create_directory(root / "campaign/.campaign-lock");
         reject_campaign(campaign_plan, campaign_options, "concurrent campaign writer rejected");
         fs::remove(root / "campaign/.campaign-lock");
+        if (argc == 3 && std::string(argv[1]) == "--cpu-worker")
+            checks += cpu_tests(root / "real-cpu", header(), fs::absolute(path_from(argv[2])));
         if (argc == 3 && std::string(argv[1]) == "--real-worker") {
             atomic_json(profile, {{"schema", 1}, {"stage", "CS"}, {"mode", "header_probe"}});
             options.worker = fs::absolute(path_from(argv[2]));
@@ -486,7 +489,7 @@ int main(int argc, char **argv) {
             checks += capture_real_tests(root / "real-capture", header(), options.worker);
             checks += pixel_real_tests(root / "real-pixel", header(), options.worker);
         }
-        std::cout << "PASS: " << checks << " checks (fixtures; no guest/GPU conformance)\n";
+        std::cout << "PASS: " << checks << " checks (fixtures; no hardware/game conformance)\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << "FAIL: " << e.what() << "\n";

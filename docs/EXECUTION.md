@@ -2,9 +2,9 @@
 
 `execute-fixture` is an isolated runner and reference comparator for an **explicitly selected,
 trusted execution backend**. It is separate from the compiler-worker protocol. The shipped Kyty
-compiler worker does not implement execution, and this change does not supply an ISA interpreter,
-Vulkan replay backend or authenticated hardware reference corpus. The CI execution backend is a
-protocol test double, not a shader oracle. Those remaining components are still development work.
+compiler worker does not implement execution. A separate [CPU integer model](CPU_REFERENCE.md)
+implements a documented ISA subset; no Vulkan replay backend or authenticated hardware reference
+corpus is supplied yet. The protocol test double remains separate from that real CPU backend.
 
 ## Preparing a fixture
 
@@ -189,5 +189,6 @@ The child has the existing process deadline and 2 GiB memory limit. This is **no
 network or GPU security sandbox**: only run trusted backends. There is no log/disk quota, device
 reset mechanism or guarantee that killing a process can recover a stuck GPU driver. Use a
 disposable isolated environment for GPU experiments. No GPU device is created by the shipped
-compiler worker or protocol tests. Graphics execution, real ISA/GPU backends and authenticated
-reference data remain required work; protocol fixtures cannot substitute for them.
+compiler worker, CPU model or protocol tests. Graphics/GPU execution, broader independently
+validated ISA coverage and authenticated reference data remain required work; protocol fixtures
+cannot substitute for them.

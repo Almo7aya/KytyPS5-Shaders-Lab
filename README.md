@@ -46,7 +46,8 @@ packaged binaries, checksums and corresponding sources.
   mappings, sample masks and dual-source/alpha-remap blending, with every default disclosed.
 - An isolated compute-fixture execution protocol for explicitly selected trusted backends,
   hash-verified initial resources, reference-output comparison and an explicit GPU opt-in gate.
-  An actual ISA/GPU execution backend and trusted reference corpus are still required.
+  A separate bounded CPU integer ISA model is available; GPU execution and trusted hardware
+  reference coverage are still required.
 - Captured compute SH-register/PM4 replay through the selected upstream register decoder
   and `PrepareProgram`, with required-state checks and per-write provenance.
 - Guest disassembly, instruction inventory, opcode histogram, CFG text/JSON/DOT, intermediate/final IR,
@@ -98,7 +99,8 @@ cmake --build build-kyty --target shader-lab shader-kyty-worker shader-lab-tests
 ctest --test-dir build-kyty -R '^shader_lab_' --output-on-failure
 ```
 
-Outputs: `build-kyty/shader-lab.exe`, `build-kyty/shader-kyty-worker.exe` and its required
+Outputs include `build-kyty/shader-lab.exe`, `build-kyty/shader-cpu-reference.exe`,
+`build-kyty/shader-kyty-worker.exe` and its required
 `libwinpthread-1.dll`. Keep the DLL beside the worker. The scanner itself does not need that DLL.
 The worker links the smaller compiler-only library, but the first configuration still visits
 upstream dependency setup. Subsequent compiler edits rebuild incrementally. Pass checkpoints use
@@ -502,9 +504,11 @@ and `--allow-gpu`; scanning and compiler runs never opt in automatically.
 
 See [the complete execution protocol](docs/EXECUTION.md) for fixture/worker schemas, budgets,
 reference provenance, commands, results and isolation limits. The shipped compiler worker is
-**not an execution backend**. Current execution fixtures use a protocol test double: they validate
-orchestration and comparison, not ISA semantics or GPU conformance. Independent reference data,
-real execution backends and graphics replay remain open milestone work.
+**not an execution backend**. Protocol fixtures use a test double; a separate
+[CPU reference backend](docs/CPU_REFERENCE.md) now interprets a bounded RDNA2 integer/global-buffer
+subset without Kyty code. Its actual subprocess tests use fixed expected bit patterns and an
+independent assembler check. These are not hardware certification. Broader reference coverage,
+GPU execution and graphics replay remain open milestone work.
 
 ### Recorded reference-output comparison
 
@@ -612,8 +616,8 @@ The worker now has a smaller compiler-library source/link boundary, pass traces 
 assertion-prefix bisection; standalone upstream configuration and semantic pass bisection
 are still open.
 ZIP32 and compressed clear SELF
-adapters, nested payload budgets, reference-output comparison and the isolated execution-fixture
-protocol are added
+adapters, nested payload budgets, reference-output comparison, the isolated execution-fixture
+protocol and a bounded independent integer CPU model are added
 components of milestones 2 and 3; neither milestone is complete. Bounded captured compute
 preparation and explicit pixel compiler metadata are implemented as parts of milestone 1;
 graphics preparation/partner and host-feature coverage

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <string>
@@ -100,6 +101,13 @@ struct ExecuteOptions {
 json execution_fixture_identity(const fs::path &fixture);
 // Executes only the explicitly selected trusted backend, then compares reference outputs.
 json execute_fixture(const ExecuteOptions &options);
+struct ExecutionInputs {
+    json identity, execution, resources, profile;
+    std::vector<uint8_t> header, code;
+    std::map<std::string, std::vector<uint8_t>> resource_bytes;
+};
+// Backend-side validation uses the same fixture identity and actual snapshot bytes.
+ExecutionInputs read_execution_request(const fs::path &request);
 json export_repro(const fs::path &dataset, const fs::path &results,
                   const std::string &id, const fs::path &output);
 json replay_repro(const fs::path &bundle, const fs::path &worker,
