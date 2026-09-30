@@ -97,12 +97,40 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
-      - name: Install shader build tools
+      - name: Identify shader build-tool cache
+        id: vcpkg
         run: |
           $vcpkgRoot = Split-Path (Get-Command vcpkg).Source
-          vcpkg install 'glslang[tools,opt]:x64-windows'
-          if ($LASTEXITCODE -ne 0) { throw 'glslang installation failed' }
+          $revision = git -C $vcpkgRoot rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify hosted vcpkg revision' }
+          "root=$vcpkgRoot" >> $env:GITHUB_OUTPUT
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+      - name: Restore shader build tools
+        id: shader-tools
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ steps.vcpkg.outputs.root }}/installed/x64-windows
+          key: glslang-windows-2022-x64-${{ steps.vcpkg.outputs.revision }}-tools-opt-v1
+      - name: Install shader build tools
+        env:
+          TOOLS_CACHE_HIT: ${{ steps.shader-tools.outputs.cache-hit }}
+        run: |
+          $vcpkgRoot = Split-Path (Get-Command vcpkg).Source
+          if ($env:TOOLS_CACHE_HIT -ne 'true') {
+            vcpkg install 'glslang[tools,opt]:x64-windows'
+            if ($LASTEXITCODE -ne 0) { throw 'glslang installation failed' }
+          }
+          & "$vcpkgRoot/installed/x64-windows/tools/glslang/glslangValidator.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'glslang tool validation failed' }
           "$vcpkgRoot/installed/x64-windows/tools/glslang" >> $env:GITHUB_PATH
+      # Save before executing any selected compiler fork's CMake/build code.
+      # Do not cache arbitrary post-build mutations of the tool installation.
+      - name: Save shader build tools
+        if: steps.shader-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ steps.vcpkg.outputs.root }}/installed/x64-windows
+          key: ${{ steps.shader-tools.outputs.cache-primary-key }}
       - name: Configure source-linked build
         run: >-
           cmake -S . -B build-release -G Ninja
