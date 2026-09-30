@@ -12,6 +12,7 @@
 #include "graphics/shader/shader.h"
 #include "graphics/shader/shaderCompiler.h"
 #include "kytyGitVersion.h"
+#include "kyty_layout.hpp"
 #include "shader_lab/compiler.hpp"
 #include "shader_lab/compiler_trace.hpp"
 #include "shader_lab/host_profile.hpp"
@@ -611,6 +612,25 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
                                                      {"reason", "SPIR-V validation failed"},
                                                      {"runtime_compatibility", "not_established"}};
         sl::atomic_json(out / "host-assessment.json", result["host_assessment"]);
+        // Layout export is auxiliary evidence, never a replacement for validation or execution.
+        try {
+            auto layout = sl::compiler_layout(compiled.program, snapshot);
+            const auto profile_text = profile.dump();
+            layout["identity"] = {{"id", request.at("id")},
+                {"configured_checkout", SL_KYTY_REV}, {"compiler", sl::compiler_info_v1()},
+                {"header_sha256", sl::sha256(header)}, {"code_sha256", sl::sha256(bytes)},
+                {"profile_json_sha256", sl::sha256(sl::Bytes(
+                    reinterpret_cast<const uint8_t *>(profile_text.data()), profile_text.size()))},
+                {"spirv_sha256", result.at("spirv_sha256")}, {"stage", stage}};
+            layout["spirv_valid"] = valid;
+            sl::atomic_json(out / "compiler-layout.json", layout);
+            result["compiler_layout"] = {{"status", "exported"}, {"artifact", "compiler-layout.json"},
+                {"sha256", sl::sha256(sl::read_bytes(out / "compiler-layout.json"))},
+                {"runtime_bindings", "not_created"}};
+        } catch (const std::exception &ex) {
+            result["compiler_layout"] = {{"status", "unavailable"}, {"reason", ex.what()},
+                                          {"runtime_bindings", "not_created"}};
+        }
         return finish(valid ? "spirv_valid_under_profile" : "spirv_invalid_under_profile");
     } catch (const CompilerCheckpointStop &stop) {
         result["status"] = "pass_checkpoint_reached";

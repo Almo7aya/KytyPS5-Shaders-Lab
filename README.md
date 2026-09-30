@@ -624,7 +624,10 @@ adapters, nested payload budgets, reference-output comparison, the isolated exec
 protocol and a bounded independent integer CPU model are added
 components of milestones 2 and 3; neither milestone is complete. Bounded captured compute
 preparation and explicit pixel compiler metadata are implemented as parts of milestone 1;
-declared host-feature checks are also implemented. Graphics preparation/partners and actual
+declared host-feature checks are also implemented. A hash-bound
+[compiler resource-layout artifact](docs/COMPILER_LAYOUT.md) exports finalized descriptor arrays,
+materialized resource metadata and unresolved runtime offset slots for future replay work.
+It does not create runtime bindings or execute shaders. Graphics preparation/partners and actual
 device-query/runtime host validation remain open. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
 the development branch pending GitHub validation. Compiler-only results are not

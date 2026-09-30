@@ -59,6 +59,7 @@ list(APPEND sl_compiler_sources "${sl_register_overlay}")
 # platform/runtime ABI choices. Do not change the independent scanner's directory.
 function(sl_add_compiler_library)
   add_library(shader_lab_kyty_compiler STATIC ${sl_compiler_sources}
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/kyty_layout.cpp"
     "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/kyty_compiler.cpp")
   get_directory_property(sl_value DIRECTORY "${KYTY_ROOT}" DEFINITION CMAKE_CXX_FLAGS)
   separate_arguments(sl_flags NATIVE_COMMAND "${sl_value}")
