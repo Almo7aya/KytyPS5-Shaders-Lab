@@ -1,16 +1,43 @@
 #include "shader_lab/lab.hpp"
 #include <algorithm>
 #include <cstring>
-#include <set>
+#include <memory>
 #include <optional>
+#include <set>
 #include <zlib.h>
 #ifdef SL_HAVE_ZSTD
 #include <zstd.h>
 #endif
 namespace sl {
 namespace {
-// Shared across the entire input tree, not reset for each nested frame. Charge
-// every expanded layer, including intermediate containers, before allocating.
+// Keep representative records and exact overflow counts without stopping extraction.
+// Nested adapters use the same append path, so containers cannot multiply stored logs.
+void note_finding(Extraction &out, json finding) {
+    if (out.findings.size() < 10000) {
+        out.findings.push_back(std::move(finding));
+        return;
+    }
+    if (out.findings.back().value("kind", "") != "container_diagnostics_summarized")
+        out.findings.push_back(
+            {{"kind", "container_diagnostics_summarized"},
+             {"suppressed_by_kind", json::object()},
+             {"first_suppressed_by_kind", json::object()},
+             {"detail", "Diagnostic records summarized; extraction continued."}});
+    auto &summary = out.findings.back();
+    const auto kind = finding.value("kind", "unknown");
+    auto &counts = summary["suppressed_by_kind"];
+    if (finding.contains("suppressed_by_kind")) {
+        for (auto it = finding["suppressed_by_kind"].begin();
+             it != finding["suppressed_by_kind"].end(); ++it)
+            counts[it.key()] = counts.value(it.key(), uint64_t(0)) + it.value().get<uint64_t>();
+    } else {
+        counts[kind] = counts.value(kind, uint64_t(0)) + 1;
+        if (!summary["first_suppressed_by_kind"].contains(kind))
+            summary["first_suppressed_by_kind"][kind] = std::move(finding);
+    }
+}
+// Shared across one source file's container tree, not reset for nested frames.
+// Charge every expanded layer, including intermediate containers.
 struct ContainerBudget {
     uint64_t expanded = 0;
     size_t frames = 0;
@@ -22,30 +49,35 @@ Extraction extract_layer(Bytes bytes, size_t limit, ContainerBudget &budget, uns
 // Central-directory sizes allow streamed members (bit 3) without guessing where
 // compressed bytes end. No archive path is ever used for filesystem writes.
 std::optional<size_t> zip_end(Bytes bytes) {
-    if (bytes.size() < 22) return {};
+    if (bytes.size() < 22)
+        return {};
     const size_t first = bytes.size() > 65557 ? bytes.size() - 65557 : 0;
     for (size_t pos = bytes.size() - 22;; --pos) {
         if (integer(bytes, pos, 4) == 0x06054b50 &&
             integer(bytes, pos + 20, 2) == bytes.size() - pos - 22)
             return pos;
-        if (pos == first) break;
+        if (pos == first)
+            break;
     }
     return {};
 }
 std::string member_label(Bytes name) {
     std::string result;
     for (auto byte : name) {
-        if (byte >= 32 && byte < 127 && byte != '\\') result += char(byte);
-        else result += "\\x" + hex(byte, 2);
+        if (byte >= 32 && byte < 127 && byte != '\\')
+            result += char(byte);
+        else
+            result += "\\x" + hex(byte, 2);
     }
     return result;
 }
-Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &budget, unsigned depth) {
+Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &budget,
+                       unsigned depth) {
     Extraction out;
     auto note = [&](const char *kind, uint64_t offset, const json &extra = json::object()) {
         json value = {{"kind", kind}, {"adapter", "zip/1"}, {"offset", offset}};
         value.update(extra);
-        out.findings.push_back(std::move(value));
+        note_finding(out, std::move(value));
     };
     note("zip_archive_detected", end);
     try {
@@ -79,7 +111,8 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
                  extra = integer(bytes, pos + 30, 2), comment = integer(bytes, pos + 32, 2),
                  disk = integer(bytes, pos + 34, 2), local = integer(bytes, pos + 42, 4);
             auto next = pos + 46 + names + extra + comment;
-            if (next > end) throw std::runtime_error("truncated ZIP central member metadata");
+            if (next > end)
+                throw std::runtime_error("truncated ZIP central member metadata");
             const auto central = pos;
             pos = next;
             if (names > 4096) {
@@ -88,9 +121,13 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
                 continue;
             }
             auto name_bytes = bytes.subspan(size_t(central + 46), size_t(names));
-            json provenance = {{"member_index", member}, {"member_name", member_label(name_bytes)},
-                               {"name_encoding", "ASCII with byte escapes"}, {"local_header_offset", local},
-                               {"compressed_bytes", packed}, {"expanded_bytes", size}, {"method", method}};
+            json provenance = {{"member_index", member},
+                               {"member_name", member_label(name_bytes)},
+                               {"name_encoding", "ASCII with byte escapes"},
+                               {"local_header_offset", local},
+                               {"compressed_bytes", packed},
+                               {"expanded_bytes", size},
+                               {"method", method}};
             if (flags & (1 | 0x40 | 0x2000)) {
                 note("encrypted_zip_member_unsupported", central, provenance);
                 continue;
@@ -103,13 +140,16 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
                 note("unsupported_zip_method_or_flags", central, provenance);
                 continue;
             }
-            if (!contains(bytes, local, 30) || local + 30 > start || integer(bytes, local, 4) != 0x04034b50)
+            if (!contains(bytes, local, 30) || local + 30 > start ||
+                integer(bytes, local, 4) != 0x04034b50)
                 throw std::runtime_error("invalid ZIP local member header");
-            auto local_names = integer(bytes, local + 26, 2), local_extra = integer(bytes, local + 28, 2);
+            auto local_names = integer(bytes, local + 26, 2),
+                 local_extra = integer(bytes, local + 28, 2);
             auto data = local + 30 + local_names + local_extra;
             if (data > start || packed > start - data || local_names != names ||
                 integer(bytes, local + 6, 2) != flags || integer(bytes, local + 8, 2) != method ||
-                !std::equal(name_bytes.begin(), name_bytes.end(), bytes.begin() + size_t(local + 30)))
+                !std::equal(name_bytes.begin(), name_bytes.end(),
+                            bytes.begin() + size_t(local + 30)))
                 throw std::runtime_error("ZIP local and central member metadata disagree");
             auto member_end = data + packed;
             if (flags & 8) {
@@ -118,14 +158,19 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
                 // so accept the unsigned form only if all three fields agree.
                 auto valid = [&](uint64_t offset) {
                     return offset <= start && start - offset >= 12 &&
-                           integer(bytes, offset, 4) == crc && integer(bytes, offset + 4, 4) == packed &&
+                           integer(bytes, offset, 4) == crc &&
+                           integer(bytes, offset + 4, 4) == packed &&
                            integer(bytes, offset + 8, 4) == size;
                 };
-                if (valid(descriptor)) member_end += 12;
-                else if (contains(bytes, descriptor, 4) && integer(bytes, descriptor, 4) == 0x08074b50 && valid(descriptor + 4))
+                if (valid(descriptor))
+                    member_end += 12;
+                else if (contains(bytes, descriptor, 4) &&
+                         integer(bytes, descriptor, 4) == 0x08074b50 && valid(descriptor + 4))
                     member_end += 16;
-                else throw std::runtime_error("invalid ZIP data descriptor");
-            } else if (integer(bytes, local + 14, 4) != crc || integer(bytes, local + 18, 4) != packed ||
+                else
+                    throw std::runtime_error("invalid ZIP data descriptor");
+            } else if (integer(bytes, local + 14, 4) != crc ||
+                       integer(bytes, local + 18, 4) != packed ||
                        integer(bytes, local + 22, 4) != size) {
                 throw std::runtime_error("ZIP local sizes or checksum disagree");
             }
@@ -140,8 +185,9 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
                 note("zip_non_regular_member_skipped", central, provenance);
                 continue;
             }
-            if (depth >= 4 || size > 256 * 1024 * 1024 || size > 512 * 1024 * 1024 - budget.expanded ||
-                packed > 256 * 1024 * 1024 || out.candidates.size() >= limit) {
+            if (depth >= 4 || size > 256 * 1024 * 1024 ||
+                size > 512 * 1024 * 1024 - budget.expanded || packed > 256 * 1024 * 1024 ||
+                out.candidates.size() >= limit) {
                 note("zip_member_budget", central, provenance);
                 out.limited = true;
                 continue;
@@ -149,18 +195,25 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
             budget.expanded += size;
             std::vector<uint8_t> decoded(size_t(std::max(uint64_t(1), size)), 0);
             if (method == 0) {
-                if (size != packed) throw std::runtime_error("stored ZIP member size mismatch");
+                if (size != packed)
+                    throw std::runtime_error("stored ZIP member size mismatch");
                 std::copy_n(bytes.begin() + size_t(data), size_t(size), decoded.begin());
             } else {
                 z_stream stream{};
                 if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
                     throw std::runtime_error("cannot initialize ZIP deflate decoder");
-                struct End { z_stream *stream; ~End() { inflateEnd(stream); } } guard{&stream};
+                struct End {
+                    z_stream *stream;
+                    ~End() {
+                        inflateEnd(stream);
+                    }
+                } guard{&stream};
                 stream.next_in = const_cast<Bytef *>(bytes.data() + size_t(data));
                 stream.avail_in = uInt(packed);
                 stream.next_out = decoded.data();
                 stream.avail_out = uInt(decoded.size());
-                if (inflate(&stream, Z_FINISH) != Z_STREAM_END || stream.total_in != packed || stream.total_out != size) {
+                if (inflate(&stream, Z_FINISH) != Z_STREAM_END || stream.total_in != packed ||
+                    stream.total_out != size) {
                     note("zip_deflate_failed", central, provenance);
                     continue;
                 }
@@ -175,17 +228,19 @@ Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &b
             for (auto &candidate : inner.candidates) {
                 candidate.method = "zip/" + candidate.method;
                 candidate.offset_space = space + "/" + candidate.offset_space;
-                candidate.evidence.push_back({{"adapter", "zip/1"}, {"archive_member", provenance}});
+                candidate.evidence.push_back(
+                    {{"adapter", "zip/1"}, {"archive_member", provenance}});
                 out.candidates.push_back(std::move(candidate));
             }
             for (auto &finding : inner.findings) {
                 finding["offset_space"] = space + "/" + finding.value("offset_space", "file");
-                out.findings.push_back(std::move(finding));
+                note_finding(out, std::move(finding));
             }
             out.limited = out.limited || inner.limited;
             note("zip_member_scanned", central, provenance);
         }
-        if (pos != end) throw std::runtime_error("unparsed ZIP central-directory bytes");
+        if (pos != end)
+            throw std::runtime_error("unparsed ZIP central-directory bytes");
     } catch (const std::exception &error) {
         note("rejected_zip", end, {{"detail", error.what()}});
     }
@@ -209,19 +264,25 @@ std::vector<uint8_t> self_blocks(Bytes bytes, uint64_t entry_index, uint64_t cou
     std::optional<uint64_t> table_index;
     for (uint64_t i = 0; i < count; ++i) {
         auto table_flags = integer(bytes, 32 + 32 * i, 8);
-        if (!(table_flags & 0x800) && (table_flags & 0x30000) && ((table_flags >> 20) & 0xffff) == entry_index) {
-            if (table_index) throw std::runtime_error("ambiguous SELF linked block table");
+        if (!(table_flags & 0x800) && (table_flags & 0x30000) &&
+            ((table_flags >> 20) & 0xffff) == entry_index) {
+            if (table_index)
+                throw std::runtime_error("ambiguous SELF linked block table");
             table_index = i;
         }
     }
-    if (!table_index) throw std::runtime_error("compressed SELF has no linked block table");
+    if (!table_index)
+        throw std::runtime_error("compressed SELF has no linked block table");
     auto table = bytes.subspan(size_t(32 + 32 * *table_index), 32);
     auto table_flags = integer(table, 0, 8), table_source = integer(table, 8, 8),
          table_packed = integer(table, 16, 8), table_size = integer(table, 24, 8);
-    if (table_flags & 2) throw std::runtime_error("encrypted SELF block table is unsupported");
-    if (table_flags & 8) throw std::runtime_error("compressed SELF block table is unsupported");
+    if (table_flags & 2)
+        throw std::runtime_error("encrypted SELF block table is unsupported");
+    if (table_flags & 8)
+        throw std::runtime_error("compressed SELF block table is unsupported");
     bool has_digests = (table_flags & 0x10000) != 0;
-    if (!(table_flags & 0x20000)) throw std::runtime_error("compressed SELF requires explicit block extents");
+    if (!(table_flags & 0x20000))
+        throw std::runtime_error("compressed SELF requires explicit block extents");
     if (table_packed != table_size || table_size != blocks * (has_digests ? 40 : 8) ||
         !contains(bytes, table_source, table_size) ||
         (table_source < source + packed && source < table_source + table_size))
@@ -235,18 +296,22 @@ std::vector<uint8_t> self_blocks(Bytes bytes, uint64_t entry_index, uint64_t cou
         auto offset = integer(bytes, extents + block * 8, 4);
         auto encoded_size = integer(bytes, extents + block * 8 + 4, 4);
         auto aligned_size = encoded_size & ~uint64_t(15), padding = encoded_size & 15;
-        if (aligned_size < padding) throw std::runtime_error("invalid SELF block padding");
+        if (aligned_size < padding)
+            throw std::runtime_error("invalid SELF block padding");
         const auto payload_size = aligned_size - padding;
-        auto expanded_offset = block * block_size, expanded_size = std::min(block_size, size - expanded_offset);
-        if ((offset & 15) || offset < previous_end || offset > packed || aligned_size > packed - offset ||
-            !payload_size || payload_size > expanded_size)
+        auto expanded_offset = block * block_size,
+             expanded_size = std::min(block_size, size - expanded_offset);
+        if ((offset & 15) || offset < previous_end || offset > packed ||
+            aligned_size > packed - offset || !payload_size || payload_size > expanded_size)
             throw std::runtime_error("invalid or overlapping SELF block extent");
         previous_end = offset + aligned_size;
         auto payload = bytes.subspan(size_t(source + offset), size_t(payload_size));
         if (has_digests) {
             std::string expected;
-            for (auto byte : bytes.subspan(size_t(table_source + block * 32), 32)) expected += hex(byte, 2);
-            if (sha256(payload) != expected) throw std::runtime_error("SELF block digest mismatch");
+            for (auto byte : bytes.subspan(size_t(table_source + block * 32), 32))
+                expected += hex(byte, 2);
+            if (sha256(payload) != expected)
+                throw std::runtime_error("SELF block digest mismatch");
         }
         bool stored = payload_size == expanded_size;
         if (stored) {
@@ -255,7 +320,12 @@ std::vector<uint8_t> self_blocks(Bytes bytes, uint64_t entry_index, uint64_t cou
             z_stream stream{};
             if (inflateInit2(&stream, 12) != Z_OK)
                 throw std::runtime_error("cannot initialize SELF block decompressor");
-            struct End { z_stream *stream; ~End() { inflateEnd(stream); } } guard{&stream};
+            struct End {
+                z_stream *stream;
+                ~End() {
+                    inflateEnd(stream);
+                }
+            } guard{&stream};
             stream.next_in = const_cast<Bytef *>(payload.data());
             stream.avail_in = uInt(payload.size());
             stream.next_out = decoded.data() + size_t(expanded_offset);
@@ -264,30 +334,37 @@ std::vector<uint8_t> self_blocks(Bytes bytes, uint64_t entry_index, uint64_t cou
                 stream.total_out != expanded_size)
                 throw std::runtime_error("SELF block decompression failed or size mismatch");
         }
-        mapping.push_back({{"block", block}, {"source_offset", source + offset},
-                           {"stored_bytes", payload_size}, {"encoded_extent_size", encoded_size},
-                           {"expanded_offset", expanded_offset}, {"expanded_bytes", expanded_size},
-                           {"encoding", stored ? "stored" : "zlib"}, {"digest_checked", has_digests}});
+        mapping.push_back({{"block", block},
+                           {"source_offset", source + offset},
+                           {"stored_bytes", payload_size},
+                           {"encoded_extent_size", encoded_size},
+                           {"expanded_offset", expanded_offset},
+                           {"expanded_bytes", expanded_size},
+                           {"encoding", stored ? "stored" : "zlib"},
+                           {"digest_checked", has_digests}});
     }
     return decoded;
 }
 Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBudget &budget,
                          [[maybe_unused]] unsigned depth) {
-    if (auto end = zip_end(bytes)) return extract_zip(bytes, *end, limit, budget, depth);
+    if (auto end = zip_end(bytes))
+        return extract_zip(bytes, *end, limit, budget, depth);
     if (contains(bytes, 0, 4) && integer(bytes, 0, 4) == 0x04034b50) {
         Extraction rejected;
-        rejected.findings.push_back({{"kind", "rejected_zip"}, {"adapter", "zip/1"},
-                                     {"detail", "missing complete central directory; no raw member fallback"}});
+        rejected.findings.push_back(
+            {{"kind", "rejected_zip"},
+             {"adapter", "zip/1"},
+             {"detail", "missing complete central directory; no raw member fallback"}});
         return rejected;
     }
     const bool is_self = contains(bytes, 0, 4) &&
-        (integer(bytes, 0, 4) == 0x1d3d154f || integer(bytes, 0, 4) == 0xeef51454);
+                         (integer(bytes, 0, 4) == 0x1d3d154f || integer(bytes, 0, 4) == 0xeef51454);
     // A known SELF must not bypass segment encryption/validation through raw
     // signature scanning of its container bytes.
     auto out = is_self ? Extraction{} : extract(bytes, limit);
 #ifdef SL_HAVE_ZSTD
-    // Scan independently framed Zstandard data. Unknown-size/dictionary streams
-    // remain coverage gaps; never allocate from an unchecked declared size.
+    // Unknown-size frames stream into a bounded buffer. Resource limits still apply
+    // across nested frames; no allocation uses an unchecked declared size.
     for (size_t pos = 0; !is_self && pos + 4 <= bytes.size();) {
         auto p = static_cast<const uint8_t *>(
             std::memchr(bytes.data() + pos, 0x28, bytes.size() - pos - 3));
@@ -299,8 +376,8 @@ Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBu
             continue;
         }
         if (++budget.frames > 4096) {
-            out.findings.push_back({{"kind", "container_member_budget"}, {"offset", pos},
-                                    {"max_members", 4096}});
+            note_finding(
+                out, {{"kind", "container_member_budget"}, {"offset", pos}, {"max_members", 4096}});
             out.limited = true;
             break;
         }
@@ -312,55 +389,117 @@ Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBu
             continue;
         }
         if (depth >= 4) {
-            out.findings.push_back({{"kind", "container_depth_budget"}, {"offset", pos},
-                                    {"max_depth", 4}, {"adapter", "zstd/1"}});
+            note_finding(out, {{"kind", "container_depth_budget"},
+                               {"offset", pos},
+                               {"max_depth", 4},
+                               {"adapter", "zstd/1"}});
             out.limited = true;
             pos += packed;
             continue;
         }
-        if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR ||
-            size > 256 * 1024 * 1024 || size > 512 * 1024 * 1024 - budget.expanded) {
-            out.findings.push_back({{"kind", "zstd_size_limit_or_unknown"}, {"offset", pos}});
+        const uint64_t capacity =
+            std::min<uint64_t>(256 * 1024 * 1024, 512 * 1024 * 1024 - budget.expanded);
+        if (size != ZSTD_CONTENTSIZE_UNKNOWN && size > capacity) {
+            note_finding(out, {{"kind", "container_expansion_budget"},
+                               {"offset", pos},
+                               {"compressed_bytes", packed},
+                               {"declared_bytes", size},
+                               {"remaining_bytes", capacity},
+                               {"adapter", "zstd/1"}});
             out.limited = true;
             pos += packed;
             continue;
         }
-        budget.expanded += size;
-        std::vector<uint8_t> decoded(size_t(size), 0);
-        auto actual = ZSTD_decompress(decoded.data(), decoded.size(), frame.data(), packed);
+        std::vector<uint8_t> decoded;
+        size_t actual = 0;
+        bool expansion_limit = false;
+        if (size == ZSTD_CONTENTSIZE_UNKNOWN) {
+            std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> context(ZSTD_createDCtx(),
+                                                                         ZSTD_freeDCtx);
+            if (!context)
+                throw std::runtime_error("cannot allocate Zstandard context");
+            // Bound decoder history as well as retained output (2^28 bytes).
+            auto setting = ZSTD_DCtx_setParameter(context.get(), ZSTD_d_windowLogMax, 28);
+            if (ZSTD_isError(setting))
+                throw std::runtime_error(ZSTD_getErrorName(setting));
+            ZSTD_inBuffer source{frame.data(), packed, 0};
+            std::vector<uint8_t> chunk(64 * 1024);
+            size_t remaining = 1;
+            while (remaining && !ZSTD_isError(remaining)) {
+                const auto before = source.pos;
+                ZSTD_outBuffer destination{chunk.data(), chunk.size(), 0};
+                remaining = ZSTD_decompressStream(context.get(), &destination, &source);
+                if (destination.pos > capacity - decoded.size()) {
+                    expansion_limit = true;
+                    break;
+                }
+                decoded.insert(decoded.end(), chunk.begin(), chunk.begin() + destination.pos);
+                if (remaining && source.pos == before && !destination.pos)
+                    break;
+            }
+            actual = ZSTD_isError(remaining) ? remaining : decoded.size();
+            if (!ZSTD_isError(remaining) && remaining && !expansion_limit) {
+                note_finding(out, {{"kind", "zstd_decompression_failed"},
+                                   {"offset", pos},
+                                   {"detail", "incomplete streamed frame"}});
+                pos += packed;
+                budget.expanded += decoded.size();
+                continue;
+            }
+            size = decoded.size();
+        } else {
+            decoded.resize(size_t(size));
+            actual = ZSTD_decompress(decoded.data(), decoded.size(), frame.data(), packed);
+        }
+        budget.expanded += decoded.size();
+        if (expansion_limit) {
+            note_finding(out, {{"kind", "container_expansion_budget"},
+                               {"offset", pos},
+                               {"compressed_bytes", packed},
+                               {"remaining_bytes", capacity},
+                               {"detail", "unknown-size frame exceeded bounded streaming output"}});
+            out.limited = true;
+            pos += packed;
+            continue;
+        }
         if (ZSTD_isError(actual) || actual != size) {
-            out.findings.push_back(
-                {{"kind", "zstd_decompression_failed"},
-                 {"offset", pos},
-                 {"detail", ZSTD_isError(actual) ? ZSTD_getErrorName(actual) : "size mismatch"}});
+            note_finding(out, {{"kind", "zstd_decompression_failed"},
+                               {"offset", pos},
+                               {"detail", ZSTD_isError(actual) ? ZSTD_getErrorName(actual)
+                                                               : "size mismatch"}});
             pos += packed;
             continue;
         }
-        auto inner =
-            extract_layer(decoded, limit > out.candidates.size() ? limit - out.candidates.size() : 0,
-                          budget, depth + 1);
+        auto inner = extract_layer(
+            decoded, limit > out.candidates.size() ? limit - out.candidates.size() : 0, budget,
+            depth + 1);
         const auto frame_space = "zstd_frame@0x" + hex(pos);
         for (auto &c : inner.candidates) {
             c.offset_space = frame_space + "/" + c.offset_space;
             c.method = "zstd/" + c.method;
-            c.evidence.push_back(
-                {{"adapter", "zstd/1"}, {"frame_offset", pos}, {"depth", depth},
-                 {"compressed_bytes", packed}, {"expanded_bytes", size}});
+            c.evidence.push_back({{"adapter", "zstd/1"},
+                                  {"frame_offset", pos},
+                                  {"depth", depth},
+                                  {"compressed_bytes", packed},
+                                  {"expanded_bytes", size}});
             out.candidates.push_back(std::move(c));
         }
         for (auto &f : inner.findings) {
             f["offset_space"] = frame_space + "/" + f.value("offset_space", "file");
-            out.findings.push_back(std::move(f));
+            note_finding(out, std::move(f));
         }
         out.limited = out.limited || inner.limited;
-        out.findings.push_back(
-            {{"kind", "zstd_frame_scanned"}, {"adapter", "zstd/1"}, {"offset", pos},
-             {"expanded_bytes", size}, {"depth", depth}});
+        note_finding(out, {{"kind", "zstd_frame_scanned"},
+                           {"adapter", "zstd/1"},
+                           {"offset", pos},
+                           {"expanded_bytes", size},
+                           {"depth", depth}});
         pos += packed;
     }
 #endif
     if (bytes.size() < 32) {
-        if (is_self) out.findings.push_back({{"kind", "rejected_self"}, {"detail", "truncated SELF header"}});
+        if (is_self)
+            note_finding(out, {{"kind", "rejected_self"}, {"detail", "truncated SELF header"}});
         return out;
     }
     auto magic = integer(bytes, 0, 4);
@@ -399,7 +538,9 @@ Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBu
             if (integer(ph, 0, 4) != 1)
                 continue;
             if (flags & 2) {
-                out.findings.push_back({{"kind", "encrypted_self_segment"}, {"adapter", "self/2"}, {"segment", i}});
+                note_finding(
+                    out,
+                    {{"kind", "encrypted_self_segment"}, {"adapter", "self/2"}, {"segment", i}});
                 continue;
             }
             auto src = integer(s, 8, 8), packed = integer(s, 16, 8), unpacked = integer(s, 24, 8),
@@ -416,11 +557,14 @@ Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBu
             Segment segment{src, dst, size, va, packed, {}, json::array()};
             if (flags & 8) {
                 if (depth >= 4) {
-                    out.findings.push_back({{"kind", "container_depth_budget"}, {"adapter", "self/2"}, {"segment", i}});
+                    note_finding(out, {{"kind", "container_depth_budget"},
+                                       {"adapter", "self/2"},
+                                       {"segment", i}});
                     out.limited = true;
                     continue;
                 }
-                segment.decoded = self_blocks(bytes, i, count, flags, src, packed, size, budget, segment.blocks);
+                segment.decoded =
+                    self_blocks(bytes, i, count, flags, src, packed, size, budget, segment.blocks);
             }
             segments.push_back(std::move(segment));
             extent = std::max(extent, dst + size);
@@ -428,15 +572,17 @@ Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBu
         if (!extent)
             return out;
         if (extent > 512 * 1024 * 1024 - budget.expanded) {
-            out.findings.push_back({{"kind", "container_expansion_budget"},
-                                    {"adapter", "self/2"}, {"expanded_bytes", extent}});
+            note_finding(out, {{"kind", "container_expansion_budget"},
+                               {"adapter", "self/2"},
+                               {"expanded_bytes", extent}});
             out.limited = true;
             return out;
         }
         budget.expanded += extent;
         std::vector<uint8_t> image(size_t(extent), 0);
         for (const auto &s : segments) {
-            auto source = s.decoded.empty() ? bytes.subspan(size_t(s.src), size_t(s.size)) : Bytes(s.decoded);
+            auto source =
+                s.decoded.empty() ? bytes.subspan(size_t(s.src), size_t(s.size)) : Bytes(s.decoded);
             std::copy(source.begin(), source.end(), image.begin() + std::ptrdiff_t(s.dst));
         }
         auto extracted =
@@ -459,23 +605,26 @@ Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBu
                     map.push_back({{"source_offset", s.src},
                                    {"elf_offset", s.dst},
                                    {"virtual_address", s.vaddr},
-                                   {"bytes", s.size}, {"stored_bytes", s.packed},
+                                   {"bytes", s.size},
+                                   {"stored_bytes", s.packed},
                                    {"blocks", s.blocks}});
             c.evidence.push_back({{"adapter", "self/2"}, {"self_segment_map", map}});
             out.candidates.push_back(std::move(c));
         }
         for (auto &finding : extracted.findings) {
             finding["offset_space"] = "reconstructed_elf_file";
-            out.findings.push_back(std::move(finding));
+            note_finding(out, std::move(finding));
         }
         out.limited = out.limited || extracted.limited;
-        out.findings.push_back({{"kind", "self_normalization"},
-                                {"adapter", "self/2"},
-                                {"clear_load_segments", segments.size()},
-                                {"note", "only fully backed candidates retained; "
-                                         "encrypted data is not reconstructed; block digests are not signature authentication"}});
+        note_finding(out, {{"kind", "self_normalization"},
+                           {"adapter", "self/2"},
+                           {"clear_load_segments", segments.size()},
+                           {"note", "only fully backed candidates retained; "
+                                    "encrypted data is not reconstructed; block digests are not "
+                                    "signature authentication"}});
     } catch (const std::exception &ex) {
-        out.findings.push_back({{"kind", "rejected_self"}, {"adapter", "self/2"}, {"detail", ex.what()}});
+        note_finding(out,
+                     {{"kind", "rejected_self"}, {"adapter", "self/2"}, {"detail", ex.what()}});
     }
     return out;
 }

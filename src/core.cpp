@@ -1,5 +1,6 @@
 #include "shader_lab/lab.hpp"
 #define XXH_INLINE_ALL
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <fstream>
@@ -9,6 +10,8 @@
 #include <xxhash.h>
 #ifdef _WIN32
 #include <windows.h>
+
+#include <bcrypt.h>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -144,6 +147,46 @@ std::string xxh3(Bytes b) {
 }
 // SHA-256 content identity, independently checked against standard vectors in tests.
 std::string sha256(Bytes b) {
+#ifdef _WIN32
+    // Use the platform's optimized SHA-256 for file-sized inputs; retain the portable
+    // implementation for small records and non-Windows builds. Identity is unchanged.
+    if (b.size() >= 4096) {
+        struct Provider {
+            BCRYPT_ALG_HANDLE handle = nullptr;
+            Provider() {
+                if (BCryptOpenAlgorithmProvider(&handle, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+                    throw std::runtime_error("SHA-256 provider initialization failed");
+            }
+            ~Provider() {
+                BCryptCloseAlgorithmProvider(handle, 0);
+            }
+        };
+        static const Provider provider;
+        struct Hash {
+            BCRYPT_HASH_HANDLE handle = nullptr;
+            ~Hash() {
+                if (handle)
+                    BCryptDestroyHash(handle);
+            }
+        } hash;
+        if (BCryptCreateHash(provider.handle, &hash.handle, nullptr, 0, nullptr, 0, 0) < 0)
+            throw std::runtime_error("SHA-256 hash initialization failed");
+        size_t offset = 0;
+        while (offset < b.size()) {
+            const auto length = ULONG(std::min<size_t>(b.size() - offset, 1024 * 1024 * 1024));
+            if (BCryptHashData(hash.handle, const_cast<PUCHAR>(b.data() + offset), length, 0) < 0)
+                throw std::runtime_error("SHA-256 hashing failed");
+            offset += length;
+        }
+        std::array<uint8_t, 32> digest{};
+        if (BCryptFinishHash(hash.handle, digest.data(), ULONG(digest.size()), 0) < 0)
+            throw std::runtime_error("SHA-256 finalization failed");
+        std::string result;
+        for (auto byte : digest)
+            result += hex(byte, 2);
+        return result;
+    }
+#endif
     constexpr std::array<uint32_t, 64> k = {
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
         0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,

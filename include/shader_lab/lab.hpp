@@ -69,7 +69,11 @@ struct ScanOptions {
     uint64_t max_file_bytes = 0;
     size_t max_candidates = 100000;
     bool resume = true;
+    unsigned jobs = 0; // 0 selects a bounded automatic scanner pool; explicit values 1..16.
+    bool games_only = false; // Normal folder workflow; raw scan remains available for shader fixtures.
 };
+// Games are keyed by their relative eboot root, never by display name/title ID.
+json identify_games(const fs::path &root, const std::vector<fs::path> &files);
 json scan(const ScanOptions &options);
 struct ProcessResult {
     uint32_t exit_code = 0;
@@ -87,6 +91,19 @@ struct RunOptions {
     bool resume = true;
 };
 json run(const RunOptions &options);
+// Complete folder workflow; worker is supplied internally by the CLI, never discovered in inputs.
+struct SemanticOptions {
+    bool enabled = false;
+    bool allow_gpu = false;
+};
+json analyze_folders(const fs::path &input, const fs::path &output, const fs::path &worker,
+                     SemanticOptions semantic = {});
+json validate_semantics(const fs::path &input, const fs::path &output, const json &manifest,
+                        const fs::path &worker, SemanticOptions options, const fs::path &dataset = {});
+void generate_semantics(const fs::path &dataset, const fs::path &output, const json &manifest,
+                         const fs::path &worker, SemanticOptions options, json &result);
+fs::path executable_path();
+unsigned automatic_jobs(unsigned cap, uint64_t memory_per_worker);
 // A campaign runs the same corpus under multiple explicit, named contexts.
 // Worker isolation and per-case cache semantics are inherited from run().
 json campaign(const RunOptions &options, const fs::path &plan);

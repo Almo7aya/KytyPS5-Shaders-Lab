@@ -17,6 +17,20 @@ model-produced bytes as evidence for another backend, preserve the model binary/
 identities and document how its supported semantics and expected results were reviewed.
 Hardware capture remains stronger independent evidence where available.
 
+The main command can now use this model automatically:
+
+```powershell
+shader-lab "inputs" "runs/analysis" --semantic --allow-gpu
+```
+
+For supported direct-buffer integer compute shaders, an isolated CPU generator produces six
+deterministic synthetic fixtures and derives expected outputs by interpreting the original
+instructions. The Vulkan worker independently runs Kyty's translation for comparison. No
+handwritten JSON is required. Without `--allow-gpu`, generation still runs but translated
+execution remains untested. See [automatic semantic validation](SEMANTIC.md) for the narrower
+generator contract, artifact locations and optional capture overrides. Model-generated outputs
+are research references, not authenticated PS5 results or inferred game state.
+
 ## Supported execution contract
 
 Only explicit `context_snapshot` compute profiles are accepted. Required root fields are

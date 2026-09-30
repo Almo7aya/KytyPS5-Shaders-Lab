@@ -6,6 +6,11 @@
 #include <zstd.h>
 #endif
 using namespace sl;
+unsigned workflow_tests(const fs::path &root, Bytes shader, const fs::path &fixture_worker);
+unsigned semantic_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned workflow_real_tests(const fs::path &root, Bytes shader, const fs::path &worker);
+unsigned performance_report_tests(const fs::path &root, Bytes shader, const fs::path &old_cli);
+unsigned game_tests(const fs::path &root, Bytes shader);
 unsigned reference_tests(const fs::path &root);
 unsigned execution_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned cpu_tests(const fs::path &root, Bytes header, const fs::path &worker);
@@ -82,7 +87,7 @@ int main(int argc, char **argv) {
         if (argc == 3 && std::string(argv[1]) == "--execute-fixture")
             return execution_fixture_worker(path_from(argv[2]));
         if (argc == 2 && std::string(argv[1]) == "--compiler-info") {
-            std::cout << json{{"pass_catalog", compiler_pass_catalog()}}.dump();
+            std::cout << json{{"worker_protocol", 1}, {"pass_catalog", compiler_pass_catalog()}}.dump();
             return 0;
         }
         if (argc == 3 && std::string(argv[1]) == "--request") {
@@ -184,6 +189,24 @@ int main(int argc, char **argv) {
         test(std::any_of(zs.candidates.begin(), zs.candidates.end(),
                          [](const auto &c) { return c.method == "zstd/amdgpu_elf"; }),
              "bounded Zstandard ELF extraction");
+        auto unknown_payload = b;
+        unknown_payload.resize(150000, 0); // More than two streaming output chunks.
+        auto *context = ZSTD_createCCtx();
+        test(context != nullptr, "stream fixture compressor allocation");
+        test(!ZSTD_isError(ZSTD_CCtx_setParameter(context, ZSTD_c_contentSizeFlag, 0)),
+             "stream fixture omits declared size");
+        std::vector<uint8_t> unknown(ZSTD_compressBound(unknown_payload.size()));
+        auto unknown_size = ZSTD_compress2(context, unknown.data(), unknown.size(),
+                                           unknown_payload.data(), unknown_payload.size());
+        ZSTD_freeCCtx(context);
+        test(!ZSTD_isError(unknown_size), "unknown-size frame generated");
+        unknown.resize(unknown_size);
+        test(ZSTD_getFrameContentSize(unknown.data(), unknown.size()) == ZSTD_CONTENTSIZE_UNKNOWN,
+             "unknown-size fixture really has no declared size");
+        auto streamed = extract_containers(unknown);
+        test(!streamed.limited && streamed.candidates.size() == 1 &&
+             streamed.candidates[0].code == zs.candidates[0].code,
+             "unknown-size Zstandard frames stream and extract without false coverage limit");
         auto compress = [&](Bytes input) {
             std::vector<uint8_t> result(ZSTD_compressBound(input.size()));
             auto length = ZSTD_compress(result.data(), result.size(), input.data(), input.size(), 3);
@@ -255,6 +278,31 @@ int main(int argc, char **argv) {
         put(bare, 472, 0x12345678, 4);
         auto x = extract(bare);
         test(x.candidates.size() == 1 && x.candidates[0].code_offset == 256, "bare header match");
+        std::vector<uint8_t> noisy;
+        const auto unpaired = header();
+        for (unsigned i = 0; i < 10010; ++i)
+            noisy.insert(noisy.end(), unpaired.begin(), unpaired.end());
+        noisy.resize((noisy.size() + 255) / 256 * 256, 0);
+        noisy.insert(noisy.end(), bare.begin(), bare.end());
+        const auto continued = extract(noisy);
+        test(!continued.limited && continued.candidates.size() == 1,
+             "diagnostic cap does not prevent a later shader from being extracted");
+        test(continued.findings.back().at("kind") == "diagnostics_summarized" &&
+             continued.findings.back().at("suppressed_by_kind").at("unpaired_header") == 10,
+             "excess diagnostics are counted exactly without retaining every record");
+#ifdef SL_HAVE_ZSTD
+        auto noisy_frame = compress(noisy);
+        auto noisy_frames = noisy_frame;
+        noisy_frames.insert(noisy_frames.end(), noisy_frame.begin(), noisy_frame.end());
+        const auto noisy_container = extract_containers(noisy_frames);
+        test(!noisy_container.limited && noisy_container.candidates.size() == 2 &&
+             noisy_container.findings.size() <= 10002,
+             "nested frames keep diagnostics bounded without losing later shaders");
+#endif
+        const auto bounded = extract(bare, 0);
+        test(bounded.limited && bounded.candidates.empty() &&
+             bounded.findings[0].at("kind") == "extraction_resource_limit",
+             "real candidate resource limits remain explicit and enforced");
         std::copy_n("barefoot", 8, bare.begin() + 720);
         put(bare, 728, 0x12345678, 4);
         bare[600] = 42;
@@ -272,6 +320,36 @@ int main(int argc, char **argv) {
                 fs::remove_all(p, ec);
             }
         } cleanup{root};
+        if (argc == 2 && std::string(argv[1]) == "--game-identification") {
+            checks += game_tests(root / "g", b);
+            std::cout << "PASS: " << checks << " checks (game identification and parser prerequisites)\n";
+            return 0;
+        }
+        if (argc >= 2 && std::string(argv[1]) == "--performance-report") {
+            checks += performance_report_tests(root / "perf", b, argc == 3 ? fs::absolute(path_from(argv[2])) : fs::path{});
+            std::cout << "PASS: " << checks << " checks (parallel scan, game reports and parser prerequisites)\n";
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--semantic-only") {
+            checks += semantic_tests(root / "sem", header(), fs::absolute(path_from(argv[0])));
+            std::cout << "PASS: " << checks << " checks (semantic orchestration; protocol doubles, no GPU)\n";
+            return 0;
+        }
+        if (argc == 3 && std::string(argv[1]) == "--semantic-vulkan") {
+            checks += vulkan_real_tests(root / "v", header(), fs::absolute(path_from(argv[2])));
+            std::cout << "PASS: " << checks << " checks (explicit Vulkan execution)\n";
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--workflow-only") {
+            checks += workflow_tests(root / "workflow", b, fs::absolute(path_from(argv[0])));
+            std::cout << "PASS: " << checks << " checks (folder workflow and parser prerequisites)\n";
+            return 0;
+        }
+        if (argc == 3 && std::string(argv[1]) == "--workflow-real") {
+            checks += workflow_real_tests(root / "real-workflow", b, fs::absolute(path_from(argv[2])));
+            std::cout << "PASS: " << checks << " checks (real compiler folder workflow and parser prerequisites)\n";
+            return 0;
+        }
         const auto long_file = root / std::string(120, 'a') / std::string(120, 'b') / "fixture.json";
         test(path_text(long_file).size() > 260, "long-path fixture exceeds legacy Windows limit");
         atomic_json(long_file, {{"long_path", true}});
@@ -343,7 +421,7 @@ int main(int argc, char **argv) {
         auto [html, report_doc] = report_data(root / "report.html");
         test(report_doc["cases"].size() == 1, "report retains dataset cases");
         test(!report_doc["cases"][0]["artifacts"].empty(), "report links available artifacts");
-        test(html.find("Rendering / semantic correctness is unverified for every case") !=
+        test(html.find("No case is certified 100% correct") !=
                  std::string::npos,
              "report prominently discloses correctness limit");
         test(html.find("<details") == std::string::npos,

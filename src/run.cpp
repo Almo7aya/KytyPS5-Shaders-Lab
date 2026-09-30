@@ -17,6 +17,7 @@ void validate_id(std::string_view s) {
 }
 } // namespace
 json run(const RunOptions &o) {
+    const auto started = std::chrono::steady_clock::now();
     if (!o.jobs || o.jobs > 64)
         throw std::runtime_error("jobs must be 1..64");
     auto dataset = fs::canonical(o.dataset), worker = fs::canonical(o.worker),
@@ -64,7 +65,7 @@ json run(const RunOptions &o) {
         ids.resize(size_t(o.limit));
     std::atomic<size_t> next = 0, done = 0;
     std::mutex mutex;
-    std::exception_ptr failure;
+    auto checkpoint = started;
     auto task = [&] {
         while (true) {
             auto i = next.fetch_add(1);
@@ -153,7 +154,12 @@ json run(const RunOptions &o) {
                 std::cout << "[" << ++done << "/" << ids.size() << "] "
                           << manifest["shaders"][id]["kyty_hash"] << " " << r["status"] << "\n"
                           << std::flush;
-                atomic_json(out / "results.json", summary);
+                // Individual result.json files above are the durable resume checkpoints.
+                // Avoid serializing the entire growing corpus once per completed shader.
+                if (std::chrono::steady_clock::now() - checkpoint >= std::chrono::seconds(5)) {
+                    atomic_json(out / "results.json", summary);
+                    checkpoint = std::chrono::steady_clock::now();
+                }
             } catch (const std::exception &ex) {
                 std::lock_guard guard(mutex);
                 summary["results"][id] = {
@@ -175,6 +181,10 @@ json run(const RunOptions &o) {
     summary["selected_cases"] = ids.size();
     summary["dataset_cases"] = manifest["shaders"].size();
     summary["limited"] = ids.size() != manifest["shaders"].size();
+    summary["jobs"] = o.jobs;
+    summary["elapsed_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
     atomic_json(out / "results.json", summary);
     return summary;
 }

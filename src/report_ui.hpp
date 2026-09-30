@@ -61,18 +61,29 @@ inline constexpr std::string_view report_head = R"HTML(<!doctype html>
 @media(max-width:1100px){.workspace{grid-template-columns:minmax(285px,.75fr) minmax(0,1.35fr)}.tab{padding:10px 6px}}
 @media(max-width:760px){.workspace{grid-template-columns:1fr}.case-panel{position:static}.case-list{height:360px;max-height:none}.inspector-nav{position:static;padding:16px 14px 0}#inspector-content{padding:15px}.tabs{flex-wrap:wrap;overflow:visible;gap:2px}.tab{flex:1 0 30%}.coverage-grid,.artifact-grid{grid-template-columns:1fr}.inspector-header small{max-width:24ch}.fingerprints{font-size:10px}}
 
+.game-tabs{display:flex;gap:8px;overflow-x:auto;padding:5px 2px 12px;scrollbar-width:thin}
+.game-tab{flex:0 0 auto;text-align:left;max-width:320px;padding:12px 18px}
+.game-tab span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.game-tab small{display:block;margin-top:4px;font-size:11px}
+.game-tab[aria-selected=true]{border-color:var(--cyan);background:#143332;box-shadow:inset 0 -3px var(--cyan)}
+.game-heading{display:flex;gap:16px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.game-heading h2{overflow-wrap:anywhere;margin-bottom:3px}.toolbar{grid-template-columns:2fr 1fr 1fr}
+@media(max-width:760px){.toolbar{grid-template-columns:1fr 1fr}.game-tab{max-width:240px}}
 </style></head><body><main>
 <header><div><div class="eyebrow">KYTYPS5 / OFFLINE COMPILER EVIDENCE</div><h1>Shader investigation lab</h1><p class="muted">From recovered bytes to compiler output. Understand what passed, what stopped, and what remains unknown.</p></div><span id="report-mode" class="pill">OFFLINE REPORT</span></header>
 <noscript><p class="no-js">Enable JavaScript to explore the embedded report. No network access is required. The source manifest and results.json remain the machine-readable records.</p></noscript>
-<div class="notice"><strong>Is the shader correct?</strong><p>This report can show whether Kyty emitted structurally valid SPIR-V under a recorded profile. It cannot prove equivalent pixels, memory writes, numerical results or synchronization. <b>Rendering / semantic correctness is unverified for every case.</b> Failures under assumed state are investigation leads, not automatically emulator bugs.</p></div>
+<div class="notice"><strong>Is the shader correct?</strong><p>Compiler validation and semantic execution are separate evidence. Semantic matches apply only to tested inputs, state and reference outputs; unsupported execution remains untested. <b>No case is certified 100% correct.</b> Automatically generated tests use an independent CPU model and synthetic state, not captured game state or hardware-certified results. Optional user references are not independently authenticated. Failures are investigation leads, not automatically emulator bugs.</p></div>
+<section class="panel" aria-label="Game reports"><div class="game-heading"><h2>Game reports</h2><small>Each tab is a separate game view · shared shaders appear in each owning game</small></div><div id="game-tabs" class="game-tabs" role="tablist" aria-label="Games"></div><div id="scan-wide-warning" class="warning"></div></section>
+<div id="game-panel" role="tabpanel" tabindex="0"><div class="game-heading"><h2 id="active-game"></h2><p class="muted">All counts, shader evidence and findings below belong to this game.</p></div>
+<dl id="game-metadata" class="meta"></dl><p id="game-metadata-warning" class="warning"></p>
 <div id="metrics" class="metrics"></div>
 <div class="two"><section class="panel"><h2>Compiler outcomes</h2><p class="muted" id="run-summary"></p><div id="outcome-bar" class="bar" aria-hidden="true"></div><div id="outcomes" class="outcomes"></div><p class="legend muted">Counts describe unique header + code cases, not all shaders a game may use. Click an outcome to filter the case explorer.</p></section>
 <section class="panel"><h2>Run identity &amp; coverage</h2><dl id="identity" class="meta"></dl><h3 class="spaced">Compiler and profile fingerprints</h3><dl id="fingerprints" class="meta fingerprints"></dl><p id="coverage-warning" class="warning"></p></section></div>
 <section class="panel" id="explorer"><h2>Explore shader cases</h2><div class="toolbar">
 <label>Search evidence<input id="search" type="search" placeholder="Hash, source, opcode, error or phase…"></label>
 <label>Outcome<select id="status-filter"><option value="">All outcomes</option></select></label>
-<label>Header stage<select id="stage-filter"><option value="">All stages</option></select></label>
-<label>Game / source group<select id="game-filter"><option value="">All games</option></select></label></div>
+<label>Header stage<select id="stage-filter"><option value="">All stages</option></select></label></div>
+<label>Semantic evidence <select id="semantic-filter"><option value="">All semantic outcomes</option></select></label>
 <div class="sorter"><span id="match-count" role="status" aria-live="polite"></span><div><label>Sort<select id="sort"><option value="attention">Needs attention first</option><option value="hash">Kyty hash</option><option value="time">Worker duration ↓</option><option value="size">Code size ↓</option></select></label> <button id="reset" type="button">Reset filters</button></div></div></section>
 <div class="workspace"><section class="panel case-panel" aria-label="Shader cases"><div class="list-heading"><div><h2>Shader cases</h2><small id="list-count"></small></div><button id="reveal-selected" type="button">Find selected</button></div><div id="case-list" class="case-list" role="listbox" tabindex="0" aria-label="Shader cases" aria-describedby="list-help"><div id="case-canvas"></div></div><p id="list-help" class="muted list-help">Scroll through all matches · ↑ ↓ to select · Home / End to jump</p></section>
 <section id="inspector" class="panel inspector" tabindex="-1" aria-label="Selected shader evidence"></section></div>
@@ -81,16 +92,17 @@ inline constexpr std::string_view report_head = R"HTML(<!doctype html>
 <tr><td>Extraction</td><td>A candidate matched a supported binary layout or documented pairing heuristic. Source offsets and hashes identify it.</td><td>Universal archive coverage, a real runtime invocation, or correct shader state.</td></tr>
 <tr><td>Decode / CFG / translation</td><td>The worker reached recorded compiler phases; available disassembly and IR help localize failures.</td><td>That every instruction was translated with equivalent behavior.</td></tr>
 <tr><td>SPIR-V validation</td><td>The emitted module passed the recorded validator environment under this profile.</td><td>Correct rendering, correct resource contents, or compatibility with every GPU/driver.</td></tr>
-<tr><td>Reference execution</td><td>Not performed by this tool.</td><td>Semantic correctness requires controlled inputs and comparison with an independent trusted reference.</td></tr>
+<tr><td>Reference comparison</td><td>Optional: --semantic --allow-gpu with local fixtures.</td><td>Matches cover only tested inputs and supplied reference outputs, not all shader behavior. See each case's Semantic evidence tab.</td></tr>
 </tbody></table></div><p class="spaced">A header probe uses derived/default state; a context snapshot is supplied state, not independently verified capture provenance. Capture real user-data, descriptors, memory, stage and draw/dispatch state before classifying profile-dependent failures as emulator bugs.</p></section>
 <footer class="footer">Self-contained offline report · No external assets, telemetry or network requests · Artifact links require the original run layout. Reports contain source paths and diagnostic logs; review before sharing.</footer>
-</main>
+</div></main>
 )HTML";
 
 inline constexpr std::string_view report_script = R"JS(
 <script>
 'use strict';
-const DATA = JSON.parse(document.getElementById('report-data').textContent);
+const ALL_DATA = JSON.parse(document.getElementById('report-data').textContent);
+let DATA=ALL_DATA,cases=[];
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pretty = value => JSON.stringify(value, null, 2);
@@ -100,7 +112,7 @@ const pre = value => '<pre>' + esc(typeof value === 'string' ? value : pretty(va
 const pair = (label, value, mono=false) => '<dt>'+esc(label)+'</dt><dd'+(mono?' class="mono"':'')+'>'+esc(defined(value))+'</dd>';
 const OUTCOMES = {
  pass_checkpoint_reached: ['untested','Diagnostic stop','Requested compiler prefix completed','Compilation stopped intentionally at a pass checkpoint. Intermediate IR and pass return are not validation or semantic correctness.','Inspect pass-trace.json and pass-stop.ir. Remove stop_after_pass to run the complete compiler; use bisect-passes on a reproducible assertion bundle.'],
- spirv_valid_under_profile: ['valid','SPIR-V valid','Structurally valid; semantics unverified','Kyty emitted a module that passed SPIRV-Tools under the recorded profile. No GPU/reference execution was performed.','Preserve this profile as a regression baseline. To test correctness, replay controlled resources and compare outputs against an independent trusted reference.'],
+ spirv_valid_under_profile: ['valid','SPIR-V valid','Compiler validation passed','Kyty emitted a module that passed SPIRV-Tools under the recorded profile. This compiler outcome makes no claim about execution; inspect the separate semantic assessment.','Preserve this profile as a regression baseline. Inspect Semantic evidence for tested fixtures, missing state and comparison results.'],
  spirv_invalid_under_profile: ['failed','SPIR-V invalid','Generated module failed validation','The validator rejected the emitted module in the recorded environment. It is not structurally valid under this profile.','Inspect validator messages and shader.spvasm, then trace the offending operation through final.ir and the SPIR-V emitter. Confirm the profile matches the intended stage/state.'],
  resource_context_unresolved: ['blocked','Needs resource context','Compilation blocked by unresolved resources','The worker could not materialize the required resources from the supplied or assumed user-data and memory.','Inspect memory-reads.json and capture the missing descriptor/user-data memory. Retry with an explicit context profile; do not substitute fabricated descriptors.'],
  missing_stage_context: ['blocked','Needs stage context','Compilation blocked by missing stage state','The adapter lacks enough stage, partner, fetch or draw state to compile this case responsibly. Decode evidence may still be available.','Capture stage/partner and draw state. Extend the adapter for the required stage preparation; changing only the stage label does not recreate missing state.'],
@@ -117,15 +129,17 @@ const OUTCOMES = {
 };
 const statusOf = c => c.result.status || 'not_tested';
 const outcome = c => OUTCOMES[statusOf(c)] || OUTCOMES.unknown;
-const sourceName = o => o.game && o.game !== '.' ? o.game : (DATA.root.replaceAll('\\','/').split('/').filter(Boolean).pop() || 'Input root');
-const cases = DATA.cases;
+const gameByKey = new Map(ALL_DATA.games.map(g=>[g.key,g]));
+const sourceName = o => gameByKey.get(o.game)?.name || 'Unassigned source (not a game)';
+function initializeGame(){
+cases = DATA.cases;
 const counts = {};
 const revisions = new Set();
 cases.forEach((c,i) => {
  c.index=i; c.details=c.result.details || {}; c.origins=c.shader.origins || [];
  c.games=[...new Set(c.origins.map(sourceName))];
  c.phase=c.details.last_phase || c.result.last_phase?.phase || 'Not recorded';
- c.search=JSON.stringify([c.id,c.shader,c.result.status,c.phase,c.details,c.result.error,c.result.log_tail]).toLowerCase();
+ c.search=JSON.stringify([c.id,c.shader,c.result.status,c.phase,c.details,c.result.error,c.result.log_tail,c.semantic]).toLowerCase();
  const s=statusOf(c); counts[s]=(counts[s]||0)+1;
  if(c.details.kyty_revision) revisions.add(c.details.kyty_revision);
 });
@@ -134,8 +148,10 @@ const valid=counts.spirv_valid_under_profile||0;
 const blocked=cases.filter(c=>outcome(c)[0]==='blocked').length;
 const failed=cases.filter(c=>outcome(c)[0]==='failed').length;
 const card=(n,label,sub,kind='')=>'<div class="metric"><span class="label">'+esc(label)+'</span><span class="number '+kind+'">'+num(n)+'</span><small>'+esc(sub)+'</small></div>';
-$('metrics').innerHTML=card(cases.length,'Extracted cases',num(DATA.file_count)+' files in manifest')+card(valid,'Structurally valid','Under the recorded profile','valid')+card(blocked,'Blocked / unsupported','Missing context or support','blocked')+card(failed,'Failed attempts','Compiler, input or runner errors','failed')+card(0,'Semantically verified','No reference execution performed','blocked');
+const semanticMatches=cases.filter(c=>c.semantic?.status==='matched_test_inputs').length;
+$('metrics').innerHTML=card(cases.length,'Extracted cases',num(DATA.file_count)+' files in manifest')+card(valid,'Structurally valid','Under the recorded profile','valid')+card(blocked,'Blocked / unsupported','Missing context or support','blocked')+card(failed,'Failed attempts','Compiler, input or runner errors','failed')+card(semanticMatches,'Matched test inputs','Limited evidence; never 100% proof',semanticMatches?'valid':'blocked');
 $('run-summary').textContent=num(tested)+' / '+num(cases.length)+' cases have recorded results. '+(tested ? (100*valid/tested).toFixed(1)+'% yielded valid SPIR-V (not a correctness score).' : 'No compilation evidence loaded.');
+$('run-summary').textContent+=' Semantic evidence: '+num(semanticMatches)+' matched tested inputs; '+num(cases.filter(c=>c.semantic?.status==='mismatch').length)+' mismatches. Other cases remain untested or inconclusive. No result proves complete correctness.';
 $('identity').innerHTML=pair('Input root',DATA.root)+pair('Scan',DATA.scan_in_progress?'Checkpoint / still in progress':DATA.scan_limited?'Limited scan':'No explicit scan limit recorded')+pair('Results',DATA.has_run?(DATA.run_limited?'Limited run; inspect untested cases':'Run results loaded'):'Extraction only')+pair('Kyty revision',revisions.size?[...revisions].join(', '):'Not recorded in available responses',true);
 $('fingerprints').innerHTML=pair('Worker SHA-256',DATA.worker_sha256||'Not recorded',true)+pair('Profile SHA-256',DATA.profile_sha256||'Not recorded',true)+pair('Extractor',DATA.extractor_id||'Not recorded',true);
 const warnings=[];
@@ -153,8 +169,9 @@ for(const [s,n] of Object.entries(counts).sort((a,b)=>b[1]-a[1])) {
  $('status-filter').add(new Option(info[1]+' ('+n+')',s));
 }
 for(const stage of [...new Set(cases.map(c=>c.shader.type||'Unknown'))].sort()) $('stage-filter').add(new Option(stage,stage));
-for(const game of [...new Set(cases.flatMap(c=>c.games))].sort()) $('game-filter').add(new Option(game,game));
+for(const s of [...new Set(cases.map(c=>c.semantic?.status||'not_requested'))].sort()) $('semantic-filter').add(new Option(semanticLabel(s),s));
 $('coverage-summary').textContent=num(DATA.gaps.length)+' files with findings or non-scanned status; '+num(DATA.traversal_errors.length)+' traversal errors. '+(DATA.coverage||'');
+}
 
 // Source findings use a searchable list and a visible evidence pane, not nested disclosures.
 function renderCoverage(){
@@ -171,11 +188,17 @@ function renderCoverage(){
  selectFinding(visible[0]?.index);
 }
 $('coverage-search').addEventListener('input',renderCoverage);
-renderCoverage();
 
 let filtered=[],selected=null,activeTab='overview';
 const rowStride=112,overscan=4;
-const TAB_NAMES=[['overview','Overview'],['diagnostics','Diagnostics'],['context','Context'],['sources','Sources'],['artifacts','Artifacts'],['raw','Raw data']];
+const TAB_NAMES=[['overview','Overview'],['semantic','Semantic evidence'],['diagnostics','Diagnostics'],['context','Context'],['sources','Sources'],['artifacts','Artifacts'],['raw','Raw data']];
+function semanticLabel(s){return ({matched_test_inputs:'Matched tested inputs — not proven',mismatch:'Output mismatch',missing_evidence:'Not tested: missing inputs/reference',unsupported:'Not tested: unsupported execution',gpu_not_allowed:'Not tested: GPU permission required',not_requested:'Not tested: semantic mode not enabled',invalid_evidence:'Invalid semantic evidence',backend_unavailable:'Not tested: execution backend missing',backend_timeout:'Execution timed out',backend_error:'Execution backend failed',execution_error:'Execution evidence error'})[s]||s;}
+function semanticHtml(c){
+ const s=c.semantic||{},tests=s.tests||[];
+ return section('Offline semantic assessment','<p class="semantic">'+esc(semanticLabel(s.status||'not_requested'))+'</p><p>'+esc(s.reason||'No semantic execution record is available. Run the main command with --semantic to generate supported tests.')+'</p><p class="warning">100% correctness: NOT PROVEN. A match covers tested inputs only. The independent CPU model is not hardware-certified; optional captures and references are not authenticated. Game-wide behavior remains unverified.</p>')+
+ (s.evidence_source==='generated_synthetic'?section('Automatically generated tests','<p>'+esc(s.assumptions)+'</p><dl class="meta">'+pair('Reference worker SHA-256',s.model_worker_sha256,true)+'</dl>'+(s.generation_links||[]).map(a=>'<p><a href="'+esc(a.href)+'">'+esc(a.name)+'</a></p>').join('')):'')+
+ tests.map((t,i)=>section('Test '+(i+1)+' · '+esc(semanticLabel(t.status)), '<p>'+esc(t.reason)+'</p>'+((t.links||[]).map(a=>'<p><a href="'+esc(a.href)+'">'+esc(a.name)+'</a></p>').join(''))+pre(t))).join('');
+}
 const fact=(label,value)=>'<div class="fact"><small>'+esc(label)+'</small><strong>'+esc(defined(value))+'</strong></div>';
 const section=(title,body,description='')=>'<section class="evidence-section"><h3>'+title+'</h3>'+(description?'<p class="section-description">'+description+'</p>':'')+body+'</section>';
 function selectedProfile(c){const p=DATA.profile||{};return p.cases?(p.cases[c.id]||p.default||{}):p;}
@@ -207,8 +230,8 @@ function overviewHtml(c){
  const reason=fatalMessage(c)||d.reason||r.error||(d.validator_messages||[])[0]?.message;
  const hostEvidence=d.host_assessment?'<div class="key-evidence"><div class="section-title"><h3>Declared host requirements: '+esc(d.host_assessment.status)+'</h3><button type="button" class="shortcut" data-open-tab="context">Host details →</button></div><p>This is separate from SPIR-V validation. Actual device and runtime compatibility are not established.</p></div>':'';
  const evidence=reason?'<div class="key-evidence"><div class="section-title"><h3>Reported failure</h3><button type="button" class="shortcut" data-open-tab="diagnostics">Full diagnostics →</button></div><p>'+esc(reason)+'</p></div>':(d.unsupported||[]).length?'<div class="key-evidence"><h3>'+num(d.unsupported.length)+' unsupported instructions</h3>'+unsupportedHtml(c)+'<button type="button" class="shortcut" data-open-tab="diagnostics">Inspect diagnostics →</button></div>':'';
- return '<div class="verdict '+info[0]+'"><span class="badge '+info[0]+'">'+esc(info[1])+'</span><p class="answer">'+esc(info[2])+'</p><p>'+esc(info[3])+'</p><div class="semantic">Correct shader behavior? Not verified.</div><div class="next"><b>Next investigation step</b><p>'+esc(info[4])+'</p></div></div>'+hostEvidence+evidence+
- section('Compiler journey','<div class="pipeline">'+pipeline+'</div>','Phase markers show execution progress, not semantic correctness. GPU execution and reference comparison were not performed.')+
+ return '<div class="verdict '+info[0]+'"><span class="badge '+info[0]+'">'+esc(info[1])+'</span><p class="answer">'+esc(info[2])+'</p><p>'+esc(info[3])+'</p><div class="semantic">Semantic evidence: '+esc(semanticLabel(c.semantic?.status||'not_requested'))+'</div><p>'+esc(c.semantic?.reason||'No execution evidence recorded.')+'</p><button type="button" class="shortcut" data-open-tab="semantic">Inspect semantic evidence →</button><div class="next"><b>Next investigation step</b><p>'+esc(info[4])+'</p></div></div>'+hostEvidence+evidence+
+ section('Compiler journey','<div class="pipeline">'+pipeline+'</div>','Phase markers show compiler progress only. Separate fixture execution evidence appears in the Semantic evidence tab.')+
  section('Recorded measurements','<div class="facts">'+fact('Header stage',c.shader.type)+fact('Effective compiler stage',d.stage)+fact('Code bytes',c.shader.code_bytes)+fact('Decoded instructions',d.decoded_instruction_count)+fact('IR blocks',d.ir_blocks)+fact('SPIR-V words',d.spirv_words)+fact('Worker duration',r.elapsed_ms===undefined?undefined:num(r.elapsed_ms)+' ms')+fact('Process exit code',r.exit_code)+fact('Result reused',r.cache_hit===undefined?undefined:r.cache_hit?'Yes — prior attempt':'No')+'</div><p class="muted">Duration is process wall time, not GPU time. Reused results retain the original duration. Exit code 0 means a response was returned, not that the shader passed.</p>')+
  '<p class="navigation-hint">Use Context for profile assumptions, Sources for extraction provenance, or Artifacts for generated compiler files.</p>';
 }
@@ -253,6 +276,7 @@ function tabHtml(c){
   section('Worker log tail','<pre class="log-view">'+esc(r.log_tail||'No worker log tail recorded.')+'</pre>','Up to the final 8 KiB. The complete worker.log is available in Artifacts.')+
   '<dl class="meta">'+pair('Raw status',statusOf(c))+pair('Last phase',c.phase)+'</dl>';
  }
+ if(activeTab==='semantic')return semanticHtml(c);
  if(activeTab==='context')return contextHtml(c);
  if(activeTab==='sources')return '<h3>'+num(c.origins.length)+' recorded source origins</h3><p class="muted">Offsets are in the stated coordinate space, not necessarily the original file. Every recorded origin is shown below.</p>'+
   (c.origins.map((o,i)=>'<article class="source"><div class="source-number">ORIGIN '+(i+1)+'</div><b>'+esc(sourceName(o))+'</b><p><code>'+esc(o.file)+'</code></p><dl class="meta">'+pair('Method',o.method)+pair('Offset space',o.offset_space||'file')+pair('Header offset',o.header_offset,true)+pair('Code offset',o.code_offset,true)+'</dl><h3>Extraction evidence</h3>'+pre(o.evidence||[])+'</article>').join('')||'<p class="muted">No source origins recorded.</p>');
@@ -314,17 +338,57 @@ $('case-list').addEventListener('keydown',e=>{
 });
 $('reveal-selected').addEventListener('click',()=>{revealSelected();$('case-list').focus({preventScroll:true});});
 function applyFilters(){
- const q=$('search').value.trim().toLowerCase(),s=$('status-filter').value,stage=$('stage-filter').value,game=$('game-filter').value;
- filtered=cases.filter(c=>(!q||c.search.includes(q))&&(!s||statusOf(c)===s)&&(!stage||(c.shader.type||'Unknown')===stage)&&(!game||c.games.includes(game)));
+ const q=$('search').value.trim().toLowerCase(),s=$('status-filter').value,stage=$('stage-filter').value,semantic=$('semantic-filter').value;
+ filtered=cases.filter(c=>(!q||c.search.includes(q))&&(!s||statusOf(c)===s)&&(!stage||(c.shader.type||'Unknown')===stage)&&(!semantic||(c.semantic?.status||'not_requested')===semantic));
  const rank={failed:0,blocked:1,untested:2,valid:3},order=$('sort').value;
- filtered.sort((a,b)=>{let diff=0;if(order==='attention')diff=rank[outcome(a)[0]]-rank[outcome(b)[0]];if(order==='time')diff=(b.result.elapsed_ms||0)-(a.result.elapsed_ms||0);if(order==='size')diff=(b.shader.code_bytes||0)-(a.shader.code_bytes||0);return diff||String(a.shader.kyty_hash).localeCompare(String(b.shader.kyty_hash))||a.id.localeCompare(b.id);});
+ filtered.sort((a,b)=>{let diff=0;if(order==='attention')diff=Number(b.semantic?.status==='mismatch')-Number(a.semantic?.status==='mismatch')||rank[outcome(a)[0]]-rank[outcome(b)[0]];if(order==='time')diff=(b.result.elapsed_ms||0)-(a.result.elapsed_ms||0);if(order==='size')diff=(b.shader.code_bytes||0)-(a.shader.code_bytes||0);return diff||String(a.shader.kyty_hash).localeCompare(String(b.shader.kyty_hash))||a.id.localeCompare(b.id);});
  if(!filtered.some(c=>c.index===selected))selected=filtered[0]?.index??null;
- $('match-count').textContent=num(filtered.length)+' of '+num(cases.length)+' cases match · Summary counts remain corpus-wide';
+ $('match-count').textContent=num(filtered.length)+' of '+num(cases.length)+' cases in this game · Summary counts are game-specific';
  $('case-list').scrollTop=0;renderList();revealSelected();renderInspector(selected===null?null:cases[selected]);
 }
-['search','status-filter','stage-filter','game-filter','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',applyFilters));
-$('reset').addEventListener('click',()=>{['search','status-filter','stage-filter','game-filter'].forEach(id=>$(id).value='');$('sort').value='attention';applyFilters();});
-applyFilters();
+['search','status-filter','stage-filter','semantic-filter','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',applyFilters));
+$('reset').addEventListener('click',()=>{['search','status-filter','stage-filter','semantic-filter'].forEach(id=>$(id).value='');$('sort').value='attention';applyFilters();});
+const gameReports=ALL_DATA.games.length?ALL_DATA.games:[{key:'',name:'No valid games found',case_ids:[],file_count:0,gap_indices:[],traversal_errors:[]}];
+const caseById=new Map(ALL_DATA.cases.map(c=>[c.id,c]));
+function selectGame(index){
+ const game=gameReports[index];
+ DATA={...ALL_DATA,file_count:game.file_count,scan_limited:game.scan_limited,orphan_results:0,
+  gaps:game.gap_indices.map(i=>ALL_DATA.gaps[i]),traversal_errors:game.traversal_errors,
+  cases:game.case_ids.map(id=>caseById.get(id)).filter(Boolean).map(c=>({...c,shader:{...c.shader,
+   origins:(c.shader.origins||[]).filter(o=>o.game===game.key)}}))};
+ $('active-game').textContent=game.name;
+ $('game-metadata').innerHTML=pair('Title ID',game.title_id||'Unknown')+pair('Version',game.version||'Unknown')+
+  pair('Game root',game.root||'Not available')+pair('Title language',game.title_language||'Unknown')+
+  pair('Metadata',game.metadata_status||'Not available')+pair('Content ID',game.content_id||'Unknown');
+ $('game-metadata-warning').textContent=(game.issues||[]).join(' ');
+ $('game-panel').setAttribute('aria-labelledby','game-tab-'+index);
+ $('game-tabs').querySelectorAll('button').forEach((b,i)=>{b.setAttribute('aria-selected',String(i===index));b.tabIndex=i===index?0:-1;});
+ $('status-filter').innerHTML='<option value="">All outcomes</option>';
+ $('stage-filter').innerHTML='<option value="">All stages</option>';
+ $('semantic-filter').innerHTML='<option value="">All semantic outcomes</option>';
+ ['search','coverage-search'].forEach(id=>$(id).value='');$('sort').value='attention';
+ $('outcomes').replaceChildren();$('outcome-bar').replaceChildren();selected=null;activeTab='overview';
+ initializeGame();renderCoverage();applyFilters();
+}
+gameReports.forEach((game,i)=>{
+ const button=document.createElement('button');button.type='button';button.className='game-tab';button.id='game-tab-'+i;
+ button.setAttribute('role','tab');button.setAttribute('aria-controls','game-panel');
+ button.innerHTML='<span>'+esc(game.name)+'</span><small>'+esc(game.title_id||'Unknown ID')+' · '+esc(game.version||'Unknown version')+'</small><small>'+esc(game.root||'')+'</small><small>'+num(game.case_ids.length)+' shaders · '+num(game.file_count)+' files</small>';
+ button.addEventListener('click',()=>selectGame(i));
+ button.addEventListener('keydown',e=>{
+  const next=e.key==='ArrowRight'?(i+1)%gameReports.length:e.key==='ArrowLeft'?(i+gameReports.length-1)%gameReports.length:e.key==='Home'?0:e.key==='End'?gameReports.length-1:null;
+  if(next!==null){e.preventDefault();selectGame(next);$('game-tab-'+next).focus();}
+ });$('game-tabs').append(button);
+});
+const scanWarnings=[];
+if(!ALL_DATA.games.length)scanWarnings.push('No valid games found. A regular eboot.bin is required in each game root; param.json alone is not a game.');
+if(ALL_DATA.non_game_files||ALL_DATA.unassigned_shader_cases)scanWarnings.push(num(ALL_DATA.non_game_files)+' recorded files and '+num(ALL_DATA.unassigned_shader_cases)+' shader cases are not assigned to a valid eboot game root and are excluded from game tabs. Raw evidence remains in the dataset.');
+if(ALL_DATA.scan_limited)scanWarnings.push('Scan-wide notice: extraction resource/work limits were reached. Review file findings for the affected offsets and reasons. Summarized diagnostics alone do not stop extraction.');
+if(ALL_DATA.semantic_issues?.length)scanWarnings.push('Semantic index issues: '+ALL_DATA.semantic_issues.map(i=>i.reason).join('; '));
+if(ALL_DATA.scan_in_progress)scanWarnings.push('Scan-wide notice: this is an in-progress checkpoint.');
+if(ALL_DATA.orphan_results)scanWarnings.push(num(ALL_DATA.orphan_results)+' results are not in this dataset and were excluded.');
+$('scan-wide-warning').innerHTML=scanWarnings.map(w=>'<p>'+esc(w)+'</p>').join('')+((ALL_DATA.unassigned_traversal_errors||[]).length?'<p>Scan-wide traversal errors (not attributable to a game):</p>'+pre(ALL_DATA.unassigned_traversal_errors):'');
+selectGame(0);
 </script></body></html>
 )JS";
 } // namespace sl

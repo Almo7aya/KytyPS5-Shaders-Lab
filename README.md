@@ -7,8 +7,22 @@ It never starts a game or executes guest CPU code. The compiler worker does not 
 
 This is a usable first implementation, **not a universal game unpacker or proof of shader correctness**.
 Valid SPIR-V is a structural result under recorded inputs. It does not prove equivalent pixels,
-memory writes, numerical behavior, synchronization, or performance. Every result explicitly says
-`semantic_correctness: not_tested`.
+memory writes, numerical behavior, synchronization, or performance. Compiler-only results say
+`semantic_correctness: not_tested`; optional execution comparisons remain `not_proven` even when
+their tested outputs match.
+
+The main command now supports optional semantic validation:
+
+```powershell
+shader-lab "inputs" "runs/analysis" --semantic --allow-gpu
+```
+
+No test JSON needs to be written for supported shaders: the command generates synthetic inputs
+and independent CPU reference outputs in the output folder, then compares Kyty's Vulkan execution.
+Unsupported shaders are explicitly marked untested; no result is labeled 100% correct.
+Omit `--allow-gpu` to generate references without GPU execution. Captured fixtures remain optional.
+See the [semantic validation guide](docs/SEMANTIC.md) for coverage and evidence limits.
+No downloads or game launches occur.
 
 See [testing and validation](docs/VALIDATION.md) for reproducible checks and their limits,
 and [architecture](docs/ARCHITECTURE.md) for the data and worker contracts.
@@ -18,6 +32,9 @@ packaged binaries, checksums and corresponding sources.
 ## What is implemented
 
 - Recursive, read-only scanning of every regular file, independent of extension; symlinks are not followed.
+- Game discovery requires a regular `eboot.bin` directly inside each game root. The normal
+  two-folder workflow scans only files owned by these roots; metadata-only and unrelated folders
+  are not games. Names, title IDs and installed content versions come from `sce_sys/param.json`.
 - Embedded AMDGPU ELF64 shaders with bounded section/name/header parsing.
 - Bare AGC headers paired to code using trailer-checksum evidence; ambiguous matches are reported,
   not guessed. The 256-byte alignment heuristic is retained and disclosed.
@@ -137,6 +154,68 @@ compilation should fail visibly instead of silently switching to an older compil
 
 ## Scan your games and compile the corpus
 
+One command handles the normal workflow:
+
+```powershell
+.\build-kyty\shader-lab.exe "inputs" "runs/analysis"
+```
+
+Only the input and output folders are required. The equivalent named form is
+`shader-lab --input "inputs" --output "runs/analysis"`.
+The tool finds `shader-kyty-worker` beside its own executable (also when launched through PATH),
+checks that it starts, discovers valid game roots, scans and extracts their corpus, compiles each unique case, groups failures,
+and generates **`runs/analysis/report.html`**. It runs fully offline and never downloads a worker.
+Use the full build/package and keep its dependency DLLs together.
+
+A valid game root must contain a regular, non-symlink **`eboot.bin`**. Its asset subdirectories
+belong to that game until a nearer nested `eboot.bin` defines another root. Merely having
+`sce_sys/param.json`, a title-looking folder name, or extracted shader files does not establish a
+game. Unrelated files are excluded from the automatic workflow and counted in `summary.json`.
+The advanced `scan` command can still extract raw shader folders, but unassigned data is not
+presented as a game tab.
+
+The title is read from `localizedParameters[defaultLanguage].titleName` in that root's own
+`sce_sys/param.json`; a missing default title falls back to `en-US`, then another available locale,
+with the chosen locale and warning recorded. The ID is `titleId`, and the installed version is
+`contentVersion` (not `masterVersion`). Missing/invalid fields remain unknown with visible warnings;
+folder names are never used as title metadata. Each installation is keyed by its relative root,
+so two copies with the same title/name but different versions are not merged. Metadata is refreshed
+on every scan, including resumed scans, and retained in the manifest for offline reports.
+
+The output folder contains `dataset/` (extraction and provenance), `run/` (compiler results and
+per-shader artifacts), `failures.json`, `compiler-info.json`, `summary.json` (progress/failure stage),
+and `report.html`. Start with an empty output folder; repeating the same command resumes that
+folder. A different input needs a different output folder. Existing unrelated folders are refused.
+The workflow automatically uses up to four file-scanning threads and up to sixteen compiler
+processes, bounded by half the logical CPUs and, on Windows, half the available memory
+(512 MiB budget per scan thread; 2 GiB per compiler process). Hosts without a memory query
+use a conservative four-process compiler cap. It retains a 30-second per-case deadline, automatic
+content-verified resume, and the existing `header_probe` profile with host subgroup size 32.
+These are disclosed assumptions, not captured runtime state or a query of your GPU.
+`summary.json` records selected concurrency and scan/compiler elapsed time. Windows uses the
+system's optimized SHA-256 for file-sized inputs without changing content identities. Scanning
+still reads every input byte to verify freshness; it does not trust timestamps alone. Parallelism
+is across files, so a single large archive and slow disks can still limit throughput. Advanced
+`scan --jobs 1` selects serial scanning; `--jobs 1..16` overrides automatic selection.
+Compiler cases are saved individually as soon as they finish; the growing aggregate results and
+scan manifest are checkpointed about every five seconds and on completion, instead of rewriting
+the entire results file after each shader. After interruption, repeat the command to reconstruct
+the aggregate from verified per-case results.
+
+The command does everything possible for this **folder-only compiler-analysis workflow**; it does
+not invent missing resources, reference outputs or runtime captures. GPU/CPU fixture execution,
+runtime-log correlation, comparisons and targeted reduction remain specialist operations requiring
+additional inputs. Shader failures are recorded and do not stop the remaining cases. Exit code 0
+means the workflow completed, **not that all shaders are correct**; 3 means scan limits/I/O errors
+left gaps (a report is still produced), and 2 means the workflow could not complete. Unsupported
+containers remain report findings even when the workflow completes. A hard interruption can leave
+`.workflow-lock`; remove it only after confirming no analysis still uses that output. If a rerun
+fails, an older report can remain: check `summary.json` for the latest attempt's status.
+
+### Advanced individual stages
+
+The previous commands remain available for investigation and custom profiles. See `--help-advanced`.
+
 ```powershell
 .\build-kyty\shader-lab.exe scan --input "inputs" --output datasets/all-games
 .\build-kyty\shader-lab.exe run --dataset datasets/all-games --worker build-kyty/shader-kyty-worker.exe --output runs/current --jobs 4 --timeout-ms 30000
@@ -218,16 +297,26 @@ Reports retain full source provenance, diagnostic text, captured profiles and ar
 offline investigation. No account, server, upload or publishing service is involved. Generated
 reports and captures are excluded from version control; documentation examples use generic inputs.
 
+The report opens one **game tab** at a time, with no combined-games dashboard. Each tab has its
+own metrics, outcome counts, shader list, source origins and extraction findings. Shared shaders
+are compiled once but appear in every owning game's tab; games with files but no recovered shaders
+are retained. Unattributed scan-wide errors are labeled separately above the tabs. Tabs show the
+param title, title ID, content version and game-root identity. Only validated eboot roots get tabs;
+there is no folder-name fallback. Left/right arrows and Home/End navigate the game tabs. When
+regenerating a legacy report without a validated game catalog, source eboots and param files are
+checked again; unavailable sources remain unassigned rather than trusting the old folder labels.
+
 The dashboard separates structurally valid modules, blocked/unsupported cases, failed attempts,
-and semantic verification (not performed). The valid-SPIR-V percentage uses cases with recorded
+and optional semantic test matches. The valid-SPIR-V percentage uses cases with recorded
 results as its denominator; it is **not a correctness or game-compatibility score**. Summary counts
-remain corpus-wide while the explorer filters by outcome, header stage, game/source group or text.
+remain specific to the selected game while the explorer filters by compiler outcome, semantic
+evidence, header stage or text.
 Results can be sorted by attention needed, hash, worker duration or code size. All matches are
 available in one continuously scrollable list, without pagination or a load-more button. The list
 renders only the visible rows to keep large corpora responsive. Use Up/Down or Home/End while the
 list is focused; **Find selected** returns to the current shader without changing the selection.
 
-The inspector has six direct-access tabs: **Overview**, **Diagnostics**, **Context**, **Sources**,
+The inspector has seven direct-access tabs: **Overview**, **Semantic evidence**, **Diagnostics**, **Context**, **Sources**,
 **Artifacts** and **Raw data**. Overview surfaces the verdict, recommended next step, key failure
 and compiler progress. Logs, profiles and source evidence are visible directly in their respective
 tabs, without nested collapsible panels. The active tab and selected shader are preserved while

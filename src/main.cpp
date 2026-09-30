@@ -3,9 +3,29 @@
 #include <map>
 #include <set>
 namespace {
-void usage() {
+void usage(bool advanced = false) {
+    if (!advanced) {
+        std::cout << R"(PS5 Shader Lab -- offline shader analysis
+  shader-lab INPUT_FOLDER OUTPUT_FOLDER [--semantic] [--allow-gpu]
+  shader-lab --input INPUT_FOLDER --output OUTPUT_FOLDER [--semantic] [--allow-gpu]
+
+Automatically scans, extracts, compiles with the bundled Kyty worker, groups failures,
+and writes OUTPUT_FOLDER/report.html. Repeating the command resumes cached work.
+Keep shader-kyty-worker and its dependency DLLs beside shader-lab.
+Input and output folders must not overlap. Game files are read-only. No downloads.
+Games require eboot.bin; titles, IDs and versions come from sce_sys/param.json.
+Non-game folders are excluded. Use advanced scan for raw shader collections.
+Compiler validation is NOT proof of correct rendering; GPU execution is not automatic.
+--semantic generates supported synthetic tests and independent CPU references in OUTPUT_FOLDER.
+Optional INPUT_FOLDER/.shader-lab/semantics.json supplies prepared tests instead.
+Add --allow-gpu to replay supported fixtures with the bundled shader-vulkan-replay.
+Missing evidence and unsupported shaders remain explicitly untested. Matches are not proof.
+Use --help-advanced for individual stages and specialist debugging commands.
+)";
+        return;
+    }
     std::cout << R"(PS5 Shader Lab 0.1.0 -- offline shader extraction and compiler regression lab
-  shader-lab scan --input GAMES --output DATASET [--max-files N] [--max-file-mb N] [--no-resume]
+  shader-lab scan --input GAMES --output DATASET [--jobs N] [--max-files N] [--max-file-mb N] [--no-resume]
   shader-lab run --dataset DATASET --worker EXE --output RUN [--profile JSON] [--jobs N] [--timeout-ms N] [--limit N] [--no-resume]
   shader-lab campaign --dataset DATASET --worker EXE --plan JSON --output CAMPAIGN [--jobs N] [--timeout-ms N] [--limit N] [--no-resume]
   shader-lab report --dataset DATASET --output report.html [--results RUN/results.json]
@@ -33,28 +53,77 @@ int main(int argc, char **argv) {
             usage();
             return 0;
         }
+        if (argc == 2 && std::string(argv[1]) == "--help-advanced") {
+            usage(true);
+            return 0;
+        }
+        const bool folders = argc >= 3 && std::string(argv[1]).rfind("--", 0) != 0 &&
+                             std::string(argv[2]).rfind("--", 0) != 0;
+        if (folders || std::string(argv[1]) == "--input" || std::string(argv[1]) == "--output" ||
+            std::string(argv[1]) == "--semantic" || std::string(argv[1]) == "--allow-gpu") {
+            sl::fs::path input, output;
+            sl::SemanticOptions semantic;
+            if (folders) {
+                input = sl::path_from(argv[1]);
+                output = sl::path_from(argv[2]);
+            }
+            std::map<std::string, std::string> options;
+            for (int i = folders ? 3 : 1; i < argc; ++i) {
+                const std::string key = argv[i];
+                if (key == "--semantic" && !semantic.enabled) {
+                    semantic.enabled = true;
+                    continue;
+                }
+                if (key == "--allow-gpu" && !semantic.allow_gpu) {
+                    semantic.allow_gpu = true;
+                    continue;
+                }
+                if (folders || (key != "--input" && key != "--output") || options.contains(key) ||
+                    i + 1 >= argc)
+                    throw std::runtime_error("unknown, duplicate or incomplete folder option: " +
+                                             key);
+                options[key] = argv[++i];
+            }
+            if (!folders) {
+                if (options.size() != 2)
+                    throw std::runtime_error("both --input and --output are required");
+                input = sl::path_from(options.at("--input"));
+                output = sl::path_from(options.at("--output"));
+            }
+            auto worker = sl::executable_path().parent_path() / "shader-kyty-worker";
+#ifdef _WIN32
+            worker += ".exe";
+#endif
+            return sl::analyze_folders(input, output, worker, semantic).at("exit_code").get<int>();
+        }
         std::string command = argv[1];
         std::map<std::string, std::string> args;
         bool resume = true;
         bool allow_gpu = false;
         const std::map<std::string, std::set<std::string>> allowed = {
-            {"scan", {"--input", "--output", "--max-files", "--max-file-mb"}},
+            {"scan", {"--input", "--output", "--jobs", "--max-files", "--max-file-mb"}},
             {"run",
              {"--dataset", "--worker", "--output", "--profile", "--jobs", "--timeout-ms",
               "--limit"}},
             {"report", {"--dataset", "--output", "--results"}},
-            {"campaign", {"--dataset", "--worker", "--plan", "--output", "--jobs", "--timeout-ms", "--limit"}},
+            {"campaign",
+             {"--dataset", "--worker", "--plan", "--output", "--jobs", "--timeout-ms", "--limit"}},
             {"compare", {"--before", "--after", "--output"}},
             {"inspect", {"--dataset", "--hash", "--output"}},
             {"correlate", {"--dataset", "--log", "--output"}},
             {"cluster", {"--results", "--output"}},
             {"verify", {"--reference", "--observed", "--output"}},
             {"fixture-info", {"--fixture", "--output"}},
-            {"execute-fixture", {"--fixture", "--reference", "--worker", "--output", "--timeout-ms", "--backend-kind"}},
+            {"execute-fixture",
+             {"--fixture", "--reference", "--worker", "--output", "--timeout-ms",
+              "--backend-kind"}},
             {"repro", {"--dataset", "--results", "--case", "--output"}},
             {"replay", {"--bundle", "--worker", "--output", "--timeout-ms"}},
-            {"minimize", {"--bundle", "--worker", "--output", "--timeout-ms", "--max-attempts", "--confirmations"}},
-            {"bisect-passes", {"--bundle", "--worker", "--output", "--timeout-ms", "--confirmations"}}};
+            {"minimize",
+             {"--bundle", "--worker", "--output", "--timeout-ms", "--max-attempts",
+              "--confirmations"}},
+            {"bisect-passes",
+             {"--bundle", "--worker", "--output", "--timeout-ms", "--confirmations"}}};
         if (!allowed.contains(command))
             throw std::runtime_error("unknown command");
         for (int i = 2; i < argc; ++i) {
@@ -63,7 +132,8 @@ int main(int argc, char **argv) {
                 allow_gpu = true;
                 continue;
             }
-            if (k == "--no-resume" && (command == "run" || command == "scan" || command == "campaign")) {
+            if (k == "--no-resume" &&
+                (command == "run" || command == "scan" || command == "campaign")) {
                 resume = false;
                 continue;
             }
@@ -95,8 +165,11 @@ int main(int argc, char **argv) {
             auto mb = number("--max-file-mb", 0);
             if (mb > UINT64_MAX / (1024 * 1024))
                 throw std::runtime_error("size overflow");
+            auto jobs = number("--jobs", 0);
+            if (jobs > 16)
+                throw std::runtime_error("scan jobs must be 0..16");
             auto r = sl::scan({path("--input"), path("--output"), number("--max-files", 0),
-                               mb * 1024 * 1024, 100000, resume});
+                               mb * 1024 * 1024, 100000, resume, unsigned(jobs)});
             std::cout << "Extracted " << r["shader_count"] << " header+code cases.\n";
             return r["limited"].get<bool>() || !r["traversal_errors"].empty() ? 3 : 0;
         }
@@ -104,11 +177,14 @@ int main(int argc, char **argv) {
             auto jobs = number("--jobs", 1);
             if (jobs > 64 || !jobs)
                 throw std::runtime_error("jobs must be 1..64");
-            sl::RunOptions options{path("--dataset"), path("--output"), path("--worker"),
-                                   path("--profile", false), unsigned(jobs),
-                                   number("--timeout-ms", 30000), number("--limit", 0), resume};
-            auto r = command == "campaign" ? sl::campaign(options, path("--plan")) : sl::run(options);
-            std::cout << (command == "campaign" ? r["contexts"] : r["status_counts"]).dump(2) << "\n";
+            sl::RunOptions options{path("--dataset"),    path("--output"),
+                                   path("--worker"),     path("--profile", false),
+                                   unsigned(jobs),       number("--timeout-ms", 30000),
+                                   number("--limit", 0), resume};
+            auto r =
+                command == "campaign" ? sl::campaign(options, path("--plan")) : sl::run(options);
+            std::cout << (command == "campaign" ? r["contexts"] : r["status_counts"]).dump(2)
+                      << "\n";
             return 0;
         }
         if (command == "report")
@@ -116,13 +192,13 @@ int main(int argc, char **argv) {
         if (command == "repro") {
             if (!args.contains("--case"))
                 throw std::runtime_error("missing --case");
-            auto result = sl::export_repro(path("--dataset"), path("--results"),
-                                          args.at("--case"), path("--output"));
+            auto result = sl::export_repro(path("--dataset"), path("--results"), args.at("--case"),
+                                           path("--output"));
             std::cout << result.dump(2) << "\n";
         }
         if (command == "replay") {
-            auto result = sl::replay_repro(path("--bundle"), path("--worker"),
-                                          path("--output"), number("--timeout-ms", 0));
+            auto result = sl::replay_repro(path("--bundle"), path("--worker"), path("--output"),
+                                           number("--timeout-ms", 0));
             std::cout << result.dump(2) << "\n";
         }
         if (command == "compare")
@@ -131,8 +207,9 @@ int main(int argc, char **argv) {
             auto confirmations = number("--confirmations", 2);
             if (confirmations < 2 || confirmations > 5)
                 throw std::runtime_error("confirmations must be 2..5");
-            auto result = sl::minimize_repro({path("--bundle"), path("--worker"), path("--output"),
-                number("--timeout-ms", 0), number("--max-attempts", 128), unsigned(confirmations)});
+            auto result = sl::minimize_repro(
+                {path("--bundle"), path("--worker"), path("--output"), number("--timeout-ms", 0),
+                 number("--max-attempts", 128), unsigned(confirmations)});
             std::cout << result.dump(2) << "\n";
             return result.value("final_verified", false) ? 0 : 4;
         }
@@ -141,7 +218,7 @@ int main(int argc, char **argv) {
             if (confirmations < 2 || confirmations > 5)
                 throw std::runtime_error("confirmations must be 2..5");
             auto result = sl::bisect_passes({path("--bundle"), path("--worker"), path("--output"),
-                                            number("--timeout-ms", 0), unsigned(confirmations)});
+                                             number("--timeout-ms", 0), unsigned(confirmations)});
             std::cout << result.dump(2) << "\n";
             return result.value("boundary_verified", false) ? 0 : 4;
         }
@@ -157,7 +234,8 @@ int main(int argc, char **argv) {
         if (command == "verify") {
             auto output = path("--output");
             if (sl::fs::exists(output))
-                throw std::runtime_error("verify requires a fresh output file to preserve evidence");
+                throw std::runtime_error(
+                    "verify requires a fresh output file to preserve evidence");
             auto result = sl::verify_reference(path("--reference"), path("--observed"));
             sl::atomic_json(output, result);
             return result["status"] == "match" ? 0 : 4;
@@ -169,9 +247,10 @@ int main(int argc, char **argv) {
             sl::atomic_json(output, sl::execution_fixture_identity(path("--fixture")));
         }
         if (command == "execute-fixture") {
-            auto result = sl::execute_fixture({path("--fixture"), path("--reference"), path("--worker"),
-                path("--output"), number("--timeout-ms", 30000),
-                args.contains("--backend-kind") ? args.at("--backend-kind") : "cpu", allow_gpu});
+            auto result = sl::execute_fixture(
+                {path("--fixture"), path("--reference"), path("--worker"), path("--output"),
+                 number("--timeout-ms", 30000),
+                 args.contains("--backend-kind") ? args.at("--backend-kind") : "cpu", allow_gpu});
             std::cout << result.dump(2) << "\n";
             return result.at("status") == "match" ? 0 : 4;
         }

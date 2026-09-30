@@ -407,6 +407,186 @@ CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
     return result;
 }
 
+int cpu_generate_fixtures(const fs::path &request_path) {
+    const auto request_file = fs::canonical(request_path);
+    const auto request_bytes = read_bytes(request_file, 1024 * 1024);
+    const auto request = json::parse(request_bytes.begin(), request_bytes.end());
+    const auto root = request_file.parent_path();
+    json response = {{"schema", 1},
+                     {"kind", "shader_lab_generated_fixtures"},
+                     {"request_sha256", sha256(request_bytes)},
+                     {"status", "unsupported"},
+                     {"generator", "rdna2-synthetic/1"},
+                     {"model", "rdna2-integer/1"},
+                     {"semantic_correctness", "not_proven"},
+                     {"tests", json::array()}};
+    try {
+        keys(request, {"schema", "kind", "header", "code", "header_sha256", "code_sha256"});
+        if (request.at("schema") != 1 || request.at("kind") != "shader_lab_generate_request")
+            unsupported("invalid generation request");
+        auto header =
+            read_bytes(path_from(request.at("header").get<std::string>()), 32 * 1024 * 1024);
+        auto code = read_bytes(path_from(request.at("code").get<std::string>()), 16384);
+        std::string why;
+        if (!valid_header(header, why) || header.at(0x5a) != 0 ||
+            integer(header, 0x44, 4) != code.size())
+            unsupported("generation needs an intact compute shader/header pair: " + why);
+        if (sha256(header) != request.at("header_sha256").get<std::string>() ||
+            sha256(code) != request.at("code_sha256").get<std::string>())
+            unsupported("generation input hash mismatch");
+        const auto instructions = decode(code);
+        std::set<uint32_t> descriptors;
+        bool writes = false;
+        for (const auto &instruction : instructions) {
+            if (instruction.op != Op::Load && instruction.op != Op::Store)
+                continue;
+            if (!instruction.buffer || instruction.b > 12)
+                unsupported("automatic fixtures support only direct buffer descriptors in s[0:15]; "
+                            "global/BDA memory needs explicit captured state");
+            descriptors.insert(instruction.b);
+            writes |= instruction.op == Op::Store;
+        }
+        if (!writes)
+            unsupported("no observable buffer stores; register-only results are not validated by "
+                        "this generator");
+        const auto fixture_root = root / "fixtures";
+        if (!fs::create_directory(fixture_root))
+            throw std::runtime_error("fixture generation requires fresh output");
+        unsigned number = 0;
+        for (const unsigned wave : {32u, 64u})
+            for (unsigned pattern = 0; pattern < 3; ++pattern) {
+                const auto name = std::to_string(number++);
+                const auto dir = fixture_root / name;
+                json test = {{"variant", name},
+                             {"wave_size", wave},
+                             {"pattern", pattern},
+                             {"status", "unsupported"}};
+                try {
+                    fs::create_directory(dir);
+                    ExecutionInputs inputs;
+                    inputs.header = header;
+                    inputs.code = code;
+                    inputs.execution = {
+                        {"stage", "CS"},
+                        {"wave_size", wave},
+                        {"exec_mask", wave == 32 ? "00000000ffffffff" : "ffffffffffffffff"},
+                        {"workgroup_size", {wave, 1, 1}},
+                        {"dispatch_size", {1, 1, 1}}};
+                    std::vector<uint32_t> users(16, pattern == 0 ? 0u : pattern == 1 ? 1u : 3u);
+                    json resources = json::object();
+                    unsigned binding = 0;
+                    for (auto reg : descriptors) {
+                        const auto resource = "buffer" + std::to_string(reg / 4);
+                        const uint32_t base = 0x1000u + reg / 4 * 0x10000u;
+                        users[reg] = base;
+                        users[reg + 1] = 0x00040000u; // 48-bit base, stride four.
+                        users[reg + 2] = 1024;
+                        users[reg + 3] =
+                            0x20014facu; // Linear R32_UINT, identity selectors, OOB_SELECT=2.
+                        auto &bytes = inputs.resource_bytes[resource];
+                        bytes.resize(4096);
+                        uint32_t random = 0x9e3779b9u ^ reg;
+                        constexpr uint32_t edges[] = {0,           1,           0xffffffffu,
+                                                      0x7fffffffu, 0x80000000u, 0xfffffffeu,
+                                                      0x55555555u, 0xaaaaaaaau};
+                        for (unsigned i = 0; i < 1024; ++i) {
+                            random ^= random << 13;
+                            random ^= random >> 17;
+                            random ^= random << 5;
+                            const auto value = pattern == 0   ? 0u
+                                               : pattern == 1 ? edges[i % 8]
+                                                              : random;
+                            for (unsigned b = 0; b < 4; ++b)
+                                bytes[i * 4 + b] = uint8_t(value >> (8 * b));
+                        }
+                        const auto file = resource + ".bin";
+                        write_bytes(dir / file, bytes);
+                        resources[resource] = {{"file", file},
+                                               {"sha256", sha256(bytes)},
+                                               {"kind", "buffer"},
+                                               {"type", "u32"},
+                                               {"access", "read_write"},
+                                               {"binding", {0, binding++}},
+                                               {"guest_address", hex(base, 16)}};
+                    }
+                    inputs.resources = resources;
+                    inputs.profile = {{"schema", 1},
+                                      {"mode", "context_snapshot"},
+                                      {"stage", "CS"},
+                                      {"wave_size", wave},
+                                      {"host_subgroup_size", 32},
+                                      {"user_data", users},
+                                      {"compute",
+                                       {{"threads", {wave, 1, 1}},
+                                        {"group_id", {false, false, false}},
+                                        {"thread_ids_num", 1},
+                                        {"workgroup_register", 16},
+                                        {"tg_size_en", false},
+                                        {"lds_size_dwords", 0},
+                                        {"scratch_size_dwords", 0},
+                                        {"float_mode", 192}}}};
+                    write_bytes(dir / "header.bin", header);
+                    write_bytes(dir / "code.bin", code);
+                    atomic_json(dir / "profile.json", inputs.profile);
+                    auto file = [&](const char *filename) {
+                        return json{{"file", filename}, {"sha256", hash_file(dir / filename)}};
+                    };
+                    atomic_json(
+                        dir / "fixture.json",
+                        {{"schema", 1},
+                         {"kind", "shader_lab_execution_fixture"},
+                         {"id", "generated-wave" + std::to_string(wave) + "-pattern" +
+                                    std::to_string(pattern)},
+                         {"shader", {{"header", file("header.bin")}, {"code", file("code.bin")}}},
+                         {"profile", file("profile.json")},
+                         {"execution", inputs.execution},
+                         {"resources", resources}});
+                    inputs.identity = execution_fixture_identity(dir / "fixture.json");
+                    auto modeled = cpu_reference(std::move(inputs));
+                    if (modeled.trace.at("buffer_stores").get<uint64_t>() == 0)
+                        unsupported("synthetic state produced no observable stores");
+                    json outputs = json::object();
+                    for (const auto &[resource, bytes] : modeled.outputs) {
+                        const auto expected = "expected-" + resource + ".bin";
+                        write_bytes(dir / expected, bytes);
+                        outputs[resource] = {{"file", expected},
+                                             {"sha256", sha256(bytes)},
+                                             {"kind", "buffer"},
+                                             {"type", "u32"},
+                                             {"comparison", {{"mode", "exact"}}}};
+                    }
+                    atomic_json(dir / "reference.json",
+                                {{"schema", 1},
+                                 {"fixture", modeled.trace.at("fixture")},
+                                 {"reference_source",
+                                  {{"kind", "independent_model"},
+                                   {"identifier", "rdna2-integer/1"},
+                                   {"method", "Independent CPU ISA execution over generated "
+                                              "synthetic inputs; no Kyty output used. Model not "
+                                              "hardware-certified; not captured game state."}}},
+                                 {"outputs", outputs}});
+                    atomic_json(dir / "model-trace.json", modeled.trace);
+                    test["status"] = "generated";
+                    test["fixture"] = path_text((dir / "fixture.json").lexically_relative(root));
+                    test["reference"] =
+                        path_text((dir / "reference.json").lexically_relative(root));
+                    test["fixture_identity"] = modeled.trace.at("fixture");
+                } catch (const std::exception &error) {
+                    test["reason"] = std::string(error.what()).substr(0, 4096);
+                }
+                response["tests"].push_back(std::move(test));
+            }
+        response["status"] = "assessed";
+        response["assumptions"] = "Synthetic wave32/wave64, one full-EXEC workgroup, direct linear "
+                                  "4 KiB buffers, zero/edge/seeded inputs, integer-only, no "
+                                  "LDS/scratch. Not inferred game state or a correctness proof.";
+    } catch (const std::exception &error) {
+        response["reason"] = std::string(error.what()).substr(0, 4096);
+    }
+    atomic_json(root / "generation.json", response);
+    return 0;
+}
+
 int cpu_reference_worker(const fs::path &request_path) {
     const auto request_file = fs::canonical(request_path);
     const auto bytes = read_bytes(request_file, 1024 * 1024);

@@ -169,6 +169,95 @@ unsigned vulkan_real_tests(const fs::path &root, Bytes input_header, const fs::p
                 throw std::runtime_error("Vulkan validation-layer diagnostic: " + log);
             std::cout << "VULKAN_REPLAY_EVIDENCE " << trace.dump() << '\n';
         }
+        if (wave == 32 && !partial_exec && first_word == 0) {
+            // The public two-folder command must exercise the same real backend and
+            // expose both matching and deliberately wrong references in its HTML.
+            const auto input = dir / "i", evidence = input / ".shader-lab";
+            fs::create_directories(evidence);
+            fs::copy(fixture_dir, evidence / "f", fs::copy_options::recursive);
+            write_text(input / "game/eboot.bin", "synthetic");
+            write_bytes(input / "game/test.header", header);
+            write_bytes(input / "game/test.code", code);
+            const auto id = sha256(header) + "-" + sha256(code);
+            atomic_json(evidence / "semantics.json",
+                        {{"schema", 1},
+                         {"tests", json::array({{{"case_id", id},
+                                                 {"fixture", "f/fixture.json"},
+                                                 {"reference", "f/reference.json"}}})}});
+            const auto cli =
+                worker.parent_path() / fs::path("shader-lab").replace_extension(worker.extension());
+            const auto attempt =
+                process(cli, {path_text(input), path_text(dir / "o"), "--semantic", "--allow-gpu"},
+                        dir, dir / "main.log", std::chrono::seconds(90));
+            if (attempt.exit_code || attempt.timed_out)
+                throw std::runtime_error("semantic main command failed: " +
+                                         path_text(dir / "main.log"));
+            const auto semantic = read_json(dir / "o/semantic/results.json");
+            if (semantic.at("cases").at(id).at("status") !=
+                (wrong_reference ? "mismatch" : "matched_test_inputs"))
+                throw std::runtime_error("main command lost actual Vulkan comparison outcome");
+            const auto html_bytes = read_bytes(dir / "o/report.html");
+            const std::string html(html_bytes.begin(), html_bytes.end());
+            if (html.find("comparison.json") == std::string::npos ||
+                html.find("semantic-filter") == std::string::npos)
+                throw std::runtime_error("semantic report lacks comparison links/filter");
+            ++checks;
+            if (!wrong_reference) {
+                const auto automatic_input = dir / "ai", automatic_output = dir / "ao";
+                write_text(automatic_input / "game/eboot.bin", "synthetic");
+                write_bytes(automatic_input / "game/test.header", header);
+                write_bytes(automatic_input / "game/test.code", code);
+                const auto increment_code =
+                    bytes({0xe0302000u, 0x80000100u, 0xbf8c0000u, 0x4a020281u, 0xe0702000u,
+                           0x80000100u, 0xbf810000u});
+                auto increment_header = header;
+                for (unsigned b = 0; b < 4; ++b)
+                    increment_header[0x44 + b] = uint8_t(increment_code.size() >> (8 * b));
+                write_bytes(automatic_input / "game/inc.header", increment_header);
+                write_bytes(automatic_input / "game/inc.code", increment_code);
+                const auto prepared = process(
+                    cli, {path_text(automatic_input), path_text(automatic_output), "--semantic"},
+                    dir, dir / "prepare.log", std::chrono::seconds(90));
+                if (prepared.exit_code || prepared.timed_out)
+                    throw std::runtime_error("main command CPU-only fixture preparation failed");
+                const auto preparation = read_json(automatic_output / "semantic/results.json");
+                if (preparation.at("status_counts").value("gpu_not_allowed", 0) != 2)
+                    throw std::runtime_error(
+                        "CPU-only preparation unexpectedly executed/failed translated shaders");
+                const auto automatic =
+                    process(cli,
+                            {path_text(automatic_input), path_text(automatic_output), "--semantic",
+                             "--allow-gpu"},
+                            dir, dir / "auto.log", std::chrono::seconds(90));
+                if (automatic.exit_code || automatic.timed_out)
+                    throw std::runtime_error("automatic main-command semantic generation failed: " +
+                                             path_text(dir / "auto.log"));
+                const auto assessment =
+                    read_json(automatic_output / "semantic/results.json").at("cases").at(id);
+                if (assessment.at("status") != "matched_test_inputs" ||
+                    assessment.at("tests").size() != 6)
+                    throw std::runtime_error("automatic CPU/Vulkan tests did not all match: " +
+                                             assessment.dump());
+                if (fs::exists(automatic_input / ".shader-lab"))
+                    throw std::runtime_error("automatic semantic workflow wrote into game input");
+                const auto increment_assessment =
+                    read_json(automatic_output / "semantic/results.json")
+                        .at("cases")
+                        .at(sha256(increment_header) + "-" + sha256(increment_code));
+                if (increment_assessment.at("status") != "matched_test_inputs" ||
+                    increment_assessment.at("tests").size() != 6)
+                    throw std::runtime_error(
+                        "generated load/modify/store Vulkan comparisons failed: " +
+                        increment_assessment.dump());
+                const auto report_bytes = read_bytes(automatic_output / "report.html");
+                const std::string report_text(report_bytes.begin(), report_bytes.end());
+                if (report_text.find("model-trace.json") == std::string::npos ||
+                    report_text.find("generation.json") == std::string::npos)
+                    throw std::runtime_error(
+                        "automatic report is missing generation/model evidence links");
+                ++checks;
+            }
+        }
         ++checks;
     };
     run_case(32, false, false);
