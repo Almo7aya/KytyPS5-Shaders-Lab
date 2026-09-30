@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       kyty_repository:
-        description: 'Kyty repository (owner/repository); only official KytyPS5/KytyPS5 builds publish releases'
+        description: 'Kyty repository (owner/repository); releases require official KytyPS5/KytyPS5 and Shader Lab main'
         required: true
         default: KytyPS5/KytyPS5
         type: string
@@ -33,6 +33,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KYTY_REPOSITORY: ${{ inputs.kyty_repository }}
           KYTY_REF: ${{ inputs.kyty_ref }}
+          SHADER_LAB_REF: ${{ github.ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -57,7 +58,10 @@ jobs:
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "official=$official" >> "$GITHUB_OUTPUT"
           echo "Compiler: $repository at $revision" >> "$GITHUB_STEP_SUMMARY"
-          echo "Publish release after successful tests: $official" >> "$GITHUB_STEP_SUMMARY"
+          publish=false
+          if [[ "$official" == true && "$SHADER_LAB_REF" == refs/heads/main ]]; then publish=true; fi
+          echo "Shader Lab ref: $SHADER_LAB_REF" >> "$GITHUB_STEP_SUMMARY"
+          echo "Publish release after successful tests: $publish (requires official compiler and Shader Lab main)" >> "$GITHUB_STEP_SUMMARY"
 
   linux:
     name: Linux extraction and report tests
@@ -164,8 +168,8 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    name: Publish official compiler build
-    if: needs.resolve.outputs.official == 'true'
+    name: Publish official main build
+    if: needs.resolve.outputs.official == 'true' && github.ref == 'refs/heads/main'
     needs: [resolve, linux, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10

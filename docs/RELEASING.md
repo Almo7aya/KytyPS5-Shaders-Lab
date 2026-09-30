@@ -17,15 +17,18 @@ run summary and package's `BUILD-INFO.json`.
 
 ## Official builds versus forks
 
-- **Official `KytyPS5/KytyPS5`:** after both build/test jobs and packaging succeed,
+- **Official `KytyPS5/KytyPS5`, dispatched from Shader Lab `main`:** after both build/test jobs and packaging succeed,
   automatically publish a GitHub Release with tag `build-<run-number>-<attempt>`.
   The tag identifies the Shader Lab commit; release notes also identify the exact
   Kyty compiler commit. Reruns create a new tag rather than overwrite a release.
-- **Any other repository:** upload downloadable workflow artifacts only. The
-  release job is skipped, regardless of the chosen compiler branch or tag.
+- **Any development/other Shader Lab branch or tag:** artifacts only, including
+  builds using official KytyPS5. The release job is skipped.
+- **Any other compiler repository:** artifacts only, even when dispatched from
+  Shader Lab `main`. The release job is skipped regardless of the compiler ref.
 
-The decision uses GitHub's canonical repository name, compared case-insensitively,
-not the name of the selected branch. Only the isolated official-build release job
+The decision uses GitHub's canonical compiler repository name, compared case-insensitively,
+and the workflow's exact Shader Lab ref `refs/heads/main`. `kyty_ref` selects compiler
+sources; it does not override this publication gate. Only the isolated official-main release job
 receives `contents: write`; compiler builds have read-only repository permissions.
 No personal access token or additional secret is required. Select only trusted
 forks: their build scripts execute on the temporary runner. Private repositories
@@ -39,7 +42,8 @@ are not supported.
 - Packaging smoke-tests the packaged CLI and compiler worker, gathers notices and
   corresponding sources, and generates SHA-256 checksums.
 - The Windows bundle is uploaded as `windows-x64-release` and retained for 14 days.
-  Official builds additionally attach the same assets to their GitHub Release.
+  Official builds dispatched from Shader Lab `main` additionally attach the same
+  assets to their GitHub Release. Development builds never publish releases.
 
 Latest upstream or fork changes can introduce worker API incompatibilities. Such
 builds fail visibly instead of falling back to an older compiler or publishing
