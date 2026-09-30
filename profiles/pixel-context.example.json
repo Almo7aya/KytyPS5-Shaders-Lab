@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "mode": "context_snapshot",
+  "stage": "PS",
+  "wave_size": 32,
+  "user_data": [],
+  "pixel": {
+    "input_num": 1,
+    "interpolator_settings": [0],
+    "ps_system_input_base": 2,
+    "custom_interpolation_mask": 1,
+    "ps_perspective_center_vgpr": 0,
+    "ps_perspective_centroid_vgpr": 4294967295,
+    "target_output_mode": [9, 0, 0, 0, 0, 0, 0, 0],
+    "target_export_mapping": [228, 228, 228, 228, 228, 228, 228, 228],
+    "scratch_size_dwords": 0,
+    "ps_pos_x": false,
+    "ps_pos_y": false,
+    "ps_pos_z": false,
+    "ps_pos_w": false,
+    "ps_front_face": false,
+    "ps_ancillary": false,
+    "ps_no_perspective": false,
+    "ps_pixel_kill_enable": false,
+    "ps_depth_export_enable": false,
+    "ps_sample_mask_export_enable": false,
+    "ps_sample_shading": false,
+    "dual_source_blending": false,
+    "alpha_blend_source_remap": false,
+    "ps_early_z": false,
+    "ps_execute_on_noop": false
+  }
+}

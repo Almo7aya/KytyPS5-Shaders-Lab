@@ -109,6 +109,8 @@ struct PassBisectOptions {
 json bisect_passes(const PassBisectOptions &options);
 // Bounded register/packet replay only. Never executes dispatches or guest memory writes.
 json captured_compute_state(Bytes header, const json &capture, uint64_t shader_address);
+// Normalize explicitly supplied pixel compiler inputs; not PM4/draw-state reconstruction.
+json normalize_pixel_profile(Bytes header, const json &pixel, uint32_t wave_size);
 json compare(const fs::path &before, const fs::path &after);
 json correlate(const fs::path &dataset, const fs::path &log);
 json inspect(const fs::path &dataset, std::string hash);

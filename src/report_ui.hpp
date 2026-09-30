@@ -216,6 +216,7 @@ function contextHtml(c){
  return section('Context & confidence','<dl class="meta">'+pair('Context mode',d.context_mode||profile.mode||'Not recorded')+pair('Validation target',d.validation_environment)+pair('Kyty revision',d.kyty_revision,true)+pair('Dispatcher fallback',d.dispatcher_fallback)+'</dl><p class="warning">Header probes use inferred/default state. Supplied snapshots are not independently verified captures. Neither mode proves semantic correctness.</p>')+
  section('Recorded assumptions',assumptions.length?'<ul>'+assumptions.map(a=>'<li>'+esc(a)+'</li>').join(''):'<p class="muted">No assumptions were returned. This does not certify that runtime state was captured.</p>')+
  (d.effective_compute?section('Effective compute configuration',pre(d.effective_compute)):'')+
+ (d.effective_pixel?section('Effective pixel configuration and defaults',pre(d.effective_pixel)):'')+
  section('Selected input profile',pre(profile))+
  section('Profile identity','<dl class="meta">'+pair('Selected profile SHA-256',r.profile_sha256,true)+'</dl>')+
  '<p class="stage-guide">CS = compute; PS = pixel/fragment; VS = vertex; GS = geometry; HS = hull/tessellation control. Header variants may require additional partner or draw state.</p>';

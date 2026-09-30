@@ -17,6 +17,8 @@ unsigned pass_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned pass_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned capture_tests(Bytes header);
 unsigned capture_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned pixel_tests(Bytes header);
+unsigned pixel_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -93,6 +95,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         unsigned checks = 0;
+        checks += pixel_tests(header());
         auto test = [&](bool ok, const char *name) {
             check(ok, name);
             ++checks;
@@ -476,6 +479,7 @@ int main(int argc, char **argv) {
             checks += minimize_real_tests(root / "real-minimization", header(), options.worker);
             checks += pass_real_tests(root / "real-passes", header(), options.worker);
             checks += capture_real_tests(root / "real-capture", header(), options.worker);
+            checks += pixel_real_tests(root / "real-pixel", header(), options.worker);
         }
         std::cout << "PASS: " << checks << " checks (fixtures; no guest/GPU conformance)\n";
         return 0;

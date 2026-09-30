@@ -464,42 +464,44 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
             }
         } else if (stage == "PS") {
             options.stage = ShaderType::Pixel;
-            auto p = profile.value("pixel", empty);
-            only_keys(p, {"input_num", "ps_system_input_base", "target_output_mode",
-                          "interpolator_settings", "ps_pos_x", "ps_pos_y", "ps_pos_z", "ps_pos_w",
-                          "ps_front_face", "ps_ancillary", "ps_pixel_kill_enable",
-                          "ps_depth_export_enable", "ps_early_z", "scratch_size_dwords"});
+            auto normalized = sl::normalize_pixel_profile(header, profile.value("pixel", empty),
+                                                          options.wave_size);
+            const auto &p = normalized.at("input");
             pixel.wave_size = options.wave_size;
-            pixel.input_num = value(p, "input_num", uint32_t(sl::integer(header, 0x50, 4)));
-            if (pixel.input_num > 32)
-                throw std::runtime_error("pixel inputs exceed 32");
-            pixel.ps_system_input_base = value(p, "ps_system_input_base", 0);
-            pixel.scratch_size_dwords =
-                value(p, "scratch_size_dwords", uint32_t(sl::integer(header, 0x54, 2)));
-            auto outputs = p.value("target_output_mode", std::vector<uint32_t>(8, 9));
-            auto interpolation =
-                p.value("interpolator_settings", std::vector<uint32_t>(pixel.input_num, 0));
-            if (outputs.size() != 8 || interpolation.size() > 32)
-                throw std::runtime_error("invalid pixel arrays");
+            pixel.input_num = p.at("input_num").get<uint32_t>();
+            pixel.ps_system_input_base = p.at("ps_system_input_base").get<uint32_t>();
+            pixel.custom_interpolation_mask = p.at("custom_interpolation_mask").get<uint32_t>();
+            pixel.ps_perspective_center_vgpr = p.at("ps_perspective_center_vgpr").get<uint32_t>();
+            pixel.ps_perspective_centroid_vgpr =
+                p.at("ps_perspective_centroid_vgpr").get<uint32_t>();
+            pixel.scratch_size_dwords = p.at("scratch_size_dwords").get<uint32_t>();
             for (size_t i = 0; i < 8; ++i) {
-                if (outputs[i] > 15)
-                    throw std::runtime_error("invalid pixel output mode");
-                pixel.target_output_mode[i] = uint8_t(outputs[i]);
+                pixel.target_output_mode[i] = p.at("target_output_mode")[i].get<uint8_t>();
+                pixel.target_export_mapping[i].packed =
+                    p.at("target_export_mapping")[i].get<uint8_t>();
             }
-            for (size_t i = 0; i < interpolation.size(); ++i)
-                pixel.interpolator_settings[i] = interpolation[i];
-            pixel.ps_pos_x = p.value("ps_pos_x", false);
-            pixel.ps_pos_y = p.value("ps_pos_y", false);
-            pixel.ps_pos_z = p.value("ps_pos_z", false);
-            pixel.ps_pos_w = p.value("ps_pos_w", false);
-            pixel.ps_front_face = p.value("ps_front_face", false);
-            pixel.ps_ancillary = p.value("ps_ancillary", false);
-            pixel.ps_pixel_kill_enable = p.value("ps_pixel_kill_enable", false);
-            pixel.ps_depth_export_enable = p.value("ps_depth_export_enable", false);
-            pixel.ps_early_z = p.value("ps_early_z", false);
+            for (size_t i = 0; i < pixel.input_num; ++i)
+                pixel.interpolator_settings[i] = p.at("interpolator_settings")[i].get<uint32_t>();
+            pixel.ps_pos_x = p.at("ps_pos_x").get<bool>();
+            pixel.ps_pos_y = p.at("ps_pos_y").get<bool>();
+            pixel.ps_pos_z = p.at("ps_pos_z").get<bool>();
+            pixel.ps_pos_w = p.at("ps_pos_w").get<bool>();
+            pixel.ps_front_face = p.at("ps_front_face").get<bool>();
+            pixel.ps_ancillary = p.at("ps_ancillary").get<bool>();
+            pixel.ps_no_perspective = p.at("ps_no_perspective").get<bool>();
+            pixel.ps_pixel_kill_enable = p.at("ps_pixel_kill_enable").get<bool>();
+            pixel.ps_depth_export_enable = p.at("ps_depth_export_enable").get<bool>();
+            pixel.ps_sample_mask_export_enable = p.at("ps_sample_mask_export_enable").get<bool>();
+            pixel.ps_sample_shading = p.at("ps_sample_shading").get<bool>();
+            pixel.dual_source_blending = p.at("dual_source_blending").get<bool>();
+            pixel.alpha_blend_source_remap = p.at("alpha_blend_source_remap").get<bool>();
+            pixel.ps_early_z = p.at("ps_early_z").get<bool>();
+            pixel.ps_execute_on_noop = p.at("ps_execute_on_noop").get<bool>();
             options.input_info.pixel = &pixel;
-            result["assumptions"].push_back("pixel probe defaults are not actual draw-state "
-                                            "reconstruction; supply explicit profile fields");
+            result["effective_pixel"] = normalized;
+            result["assumptions"].push_back("Pixel compiler inputs are supplied/defaulted, not "
+                                            "reconstructed from PM4, blend or render-target state; "
+                                            "see effective_pixel.defaulted_fields");
         } else if (stage == "VS") {
             options.stage = ShaderType::Vertex;
             auto v = profile.value("vertex", empty);

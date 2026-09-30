@@ -60,6 +60,10 @@ is added; use the test output from your build as the authoritative result.
 - Real compute preparation through the selected upstream register decoder and `PrepareProgram`,
   including user-data overwrites, wave/workgroup/LDS metadata, dispatch-thread dimensions and
   rejection of conflicting probe overrides.
+- Pixel input normalization, explicit/defaulted field tracking, numeric/array bounds, VGPR
+  overlap rejection and dual-source mapping consistency. Real compiler fixtures exercise custom
+  barycentrics, no-perspective interpolation, alpha-remap versus guest dual-source output, and
+  sample-mask export inhibiting early fragment tests; these inspect emitted modules, not rendering.
 - Report data joins, empty/extraction-only datasets and unknown/unmatched outcomes.
 - HTML/script escaping, malformed UTF-8, exact 64-bit origin offsets and safe artifact URLs.
 

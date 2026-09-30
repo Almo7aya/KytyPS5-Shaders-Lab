@@ -80,7 +80,7 @@ function(sl_add_compiler_library)
     endif()
   endforeach()
   target_link_libraries(shader_lab_kyty_compiler PUBLIC shader_lab_core PRIVATE
-    common Vulkan::Headers spirv-tools-opt spirv-tools fmt::fmt
+    common Vulkan::Headers spirv-tools-opt spirv-tools fmt::fmt xxhash
     nlohmann_json::nlohmann_json kyty_git_version)
   if(TARGET winpthread)
     target_link_libraries(shader_lab_kyty_compiler PRIVATE winpthread)

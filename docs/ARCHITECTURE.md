@@ -169,6 +169,14 @@ different shader merely because both share a stage.
 
 ## Correctness ladder
 
+Pixel profiles pass through `normalize_pixel_profile` before being copied to the selected
+upstream `ShaderPixelInputInfo`. Every omitted field is recorded; numeric, array and VGPR extents
+are checked without interpreting raw guest addresses. Effective blend/export mappings must
+already reflect upstream post-preparation specialization. This supplies compiler metadata, not
+the render-target/context reconstruction required for a future captured graphics preparation path.
+Post-compilation runtime pointers are excluded. The actual compiler-preparation support also links
+upstream's `xxhash` target for shader identities; no substitute hash implementation is injected.
+
 1. **Discovery:** a recognized, range-valid candidate exists. This can still be heuristic.
 2. **Decode:** current Kyty understands the observed instruction sequence, subject to its decoder.
 3. **Translate:** its CFG/IR/resource analyses complete under this profile.

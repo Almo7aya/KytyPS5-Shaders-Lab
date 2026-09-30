@@ -42,6 +42,8 @@ packaged binaries, checksums and corresponding sources.
   auditable source list. Upstream configure-time dependency setup is still inherited.
 - Header-derived compute probes, explicitly approximate pixel probes, explicit simple vertex
   profiles, optional supplied user-data and bounded memory snapshots.
+- Explicit pixel compiler metadata including barycentric/custom interpolation, export channel
+  mappings, sample masks and dual-source/alpha-remap blending, with every default disclosed.
 - Captured compute SH-register/PM4 replay through the selected upstream register decoder
   and `PrepareProgram`, with required-state checks and per-write provenance.
 - Guest disassembly, instruction inventory, opcode histogram, CFG text/JSON/DOT, intermediate/final IR,
@@ -230,7 +232,7 @@ Select a shader to see:
 - Compiler phase progress; markers mean execution reached a phase, not that its semantics passed.
 - Instruction/IR/output sizes, elapsed process time, exit code and cached-result reuse.
 - Validator diagnostics, unsupported instruction PCs, fatal messages and worker log tails.
-- Selected profiles, returned assumptions, effective compute state and compiler fingerprints.
+- Selected profiles, returned assumptions, effective compute/pixel state and compiler fingerprints.
 - Source origins, offsets, pairing evidence and the complete header+code identity.
 - Links to available disassembly, CFG, IR, memory-read traces and SPIR-V artifacts.
 
@@ -276,6 +278,39 @@ For different metadata per shader, supply a profile bundle:
 Replace the placeholder key with an actual full case ID. Unknown IDs/fields are rejected.
 Profiles select one context per case per run. The worker's checked-in profile parser is the
 authoritative supported field list.
+
+### Explicit pixel compiler inputs
+
+`profiles/pixel-context.example.json` is a **fictional**, fully specified pixel input example.
+It covers the compiler-input fields in upstream `ShaderPixelInputInfo`; the post-compilation
+`stage` runtime pointers are not serialized or fabricated. This is not graphics `PrepareProgram`
+or PM4 replay: supply the **effective** inputs after render-target mapping and blend-state
+specialization. The worker does not derive them from framebuffer formats or blend factors.
+The AGC header must identify a pixel shader. `wave_size` and `user_data` remain root profile fields.
+
+| Pixel fields | Contract |
+| --- | --- |
+| `input_num`, `interpolator_settings` | 0–32 inputs; exactly one raw u32 interpolation setting per active input. |
+| `custom_interpolation_mask` | One bit per active custom-interpolated input; bits outside `input_num` are rejected. |
+| `ps_perspective_center_vgpr`, `ps_perspective_centroid_vgpr` | First register of a two-VGPR pair, 0–254; `4294967295` disables that pair. |
+| `ps_system_input_base` | First system-input VGPR; enabled position components, front-face and ancillary follow in that order. Input extents must fit 256 VGPRs without overlaps. |
+| `target_output_mode` | Eight raw four-bit export modes. This records encoded state, not a guarantee that every encoding compiles. |
+| `target_export_mapping` | Eight packed u8 physical-to-logical channel mappings: two bits per channel. Identity RGBA is `228` (`0xe4`); reversed ABGR is `27` (`0x1b`). |
+| `scratch_size_dwords` | Unsigned scratch extent from the supplied profile or header. |
+| `ps_pos_x/y/z/w`, `ps_front_face`, `ps_ancillary`, `ps_no_perspective` | Boolean stage-input controls; field names for position are individually `ps_pos_x`, etc. |
+| `ps_pixel_kill_enable`, `ps_depth_export_enable`, `ps_sample_mask_export_enable`, `ps_sample_shading`, `ps_early_z`, `ps_execute_on_noop` | Boolean fragment execution/export controls. Acceptance does not mean every upstream flag has a lowering effect. |
+| `dual_source_blending`, `alpha_blend_source_remap` | Effective post-blend specialization flags, not automatic detection. |
+
+Dual-source output requires matching active MRT0/MRT1 modes. Guest dual-source blending also
+requires matching mappings. Alpha remapping requires dual-source mode, a non-integer MRT0 mode,
+identity MRT1 mapping and no active MRT2–MRT7; the worker does not silently repair conflicting inputs.
+
+Omitted fields retain probe defaults: header input count/scratch, zero interpolation settings,
+system VGPR base zero, disabled barycentric pairs, identity export mappings, export mode 9 for
+all eight targets, and false booleans. These can be inappropriate for a real draw. `effective_pixel`
+in the response and report's Context tab records the complete normalized inputs and the exact
+`defaulted_fields` list. `context_snapshot` does not authenticate them. Compiling an example
+successfully is not evidence of matching pixels, blending, depth/stencil behavior or host support.
 
 ### Captured compute preparation
 
@@ -561,7 +596,8 @@ are still open.
 ZIP32 and compressed clear SELF
 adapters, nested payload budgets and reference-output comparison are added
 components of milestones 2 and 3; neither milestone is complete. Bounded captured compute
-preparation is implemented as part of milestone 1; graphics/partner and host-feature coverage
+preparation and explicit pixel compiler metadata are implemented as parts of milestone 1;
+graphics preparation/partner and host-feature coverage
 remain open. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
 the development branch pending GitHub validation. Compiler-only results are not
