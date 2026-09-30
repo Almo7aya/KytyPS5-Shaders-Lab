@@ -8,6 +8,9 @@ using namespace sl;
 unsigned reference_tests(const fs::path &root);
 unsigned archive_tests(Bytes shader);
 unsigned repro_tests(const fs::path &root, Bytes shader, const fs::path &worker);
+unsigned minimize_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned minimize_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
+bool minimize_fixture_worker(const json &request);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -60,6 +63,8 @@ int main(int argc, char **argv) {
     try {
         if (argc == 3 && std::string(argv[1]) == "--request") {
             auto q = read_json(path_from(argv[2]));
+            if (minimize_fixture_worker(q))
+                return 0;
             auto out = path_from(q["output"].get<std::string>());
             auto mode = q["profile"].value("test_mode", "");
             if (mode == "timeout")
@@ -249,6 +254,7 @@ int main(int argc, char **argv) {
         atomic_json(profile, {{"test_mode", "ok"}});
         auto exe = fs::absolute(path_from(argv[0]));
         checks += repro_tests(root / "repro-fixtures", b, exe);
+        checks += minimize_tests(root / "minimize-fixtures", header(), exe);
         RunOptions options{root / "dataset", root / "run", exe, profile, 2, 5000, 0, true};
         auto r = run(options);
         test(r["status_counts"]["fixture_pass"] == 1, "isolated process protocol");
@@ -415,6 +421,7 @@ int main(int argc, char **argv) {
             auto real = run(options);
             test(real["status_counts"].value("spirv_valid_under_profile", 0) == 1,
                  "real Kyty end-program SPIR-V validation");
+            checks += minimize_real_tests(root / "real-minimization", header(), options.worker);
         }
         std::cout << "PASS: " << checks << " checks (fixtures; no guest/GPU conformance)\n";
         return 0;

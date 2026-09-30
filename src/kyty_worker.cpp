@@ -151,6 +151,7 @@ int main(int argc, char **argv) {
             instructions.push_back(std::move(row));
         }
         sl::atomic_json(out / "instructions.json", {{"schema", 1},
+                                                    {"code_sha256", sl::sha256(bytes)},
                                                     {"instructions", instructions},
                                                     {"histogram", histogram},
                                                     {"bvh_early_stop", decoded.has_bvh}});

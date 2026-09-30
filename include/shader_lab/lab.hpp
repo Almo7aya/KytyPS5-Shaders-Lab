@@ -93,6 +93,13 @@ json export_repro(const fs::path &dataset, const fs::path &results,
                   const std::string &id, const fs::path &output);
 json replay_repro(const fs::path &bundle, const fs::path &worker,
                   const fs::path &output, uint64_t timeout_ms = 0);
+struct MinimizeOptions {
+    fs::path bundle, worker, output;
+    uint64_t timeout_ms = 0, max_attempts = 128;
+    unsigned confirmations = 2;
+};
+json failure_signature(const json &result);
+json minimize_repro(const MinimizeOptions &options);
 json compare(const fs::path &before, const fs::path &after);
 json correlate(const fs::path &dataset, const fs::path &log);
 json inspect(const fs::path &dataset, std::string hash);

@@ -40,6 +40,10 @@ is added; use the test output from your build as the authoritative result.
 - Worker protocol, resumable results, failure isolation and timeout termination.
 - Portable repro relocation/replay, selected-profile identity, fresh attempts, overwrite
   protection, tampered objects/profiles, artifact path containment and explicit older-run deadlines.
+- Failure reduction with a synthetic worker: necessary input retention, same-status/different-reason
+  rejection, instruction PC preservation, fresh confirmations, bounded search and invalid inventories.
+- Source-linked reduction of a reserved SOPP diagnostic, including replacement of an unrelated
+  two-dword literal instruction without moving the failing PC. This is compiler triage, not GPU testing.
 - Report data joins, empty/extraction-only datasets and unknown/unmatched outcomes.
 - HTML/script escaping, malformed UTF-8, exact 64-bit origin offsets and safe artifact URLs.
 

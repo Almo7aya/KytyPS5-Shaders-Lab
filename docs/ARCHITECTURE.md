@@ -28,6 +28,11 @@ the selected profile and original result; archived diagnostics are never executi
 Replay uses a caller-selected worker and reconstructs requests after relocation. The export
 does not embed an executable or authenticate the source evidence. Result statuses are observations,
 not a failure-preserving minimization oracle.
+`minimize.cpp` uses a stricter diagnostic predicate and repeated isolated runs to reduce repro
+inputs. It operates only on fresh output copies, reserves final confirmations and checkpoints
+accepted/rejected trials. Code reduction requires fresh hash-bound decoder extents and substitutes
+whole instructions with NOP words without relocating code. This preserves observed failure evidence,
+not program semantics; reductions and incomplete search are recorded explicitly.
 `analysis.cpp` implements local research/triage operations.
 `kyty_worker.cpp` is the only source tied to Kyty's compiler API.
 

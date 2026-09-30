@@ -46,6 +46,8 @@ packaged binaries, checksums and corresponding sources.
   hash-to-source lookup; correlation with `hash=0x...` observations from existing emulator logs.
 - Portable, content-verified single-case repro bundles and fresh isolated replay with an
   explicitly selected worker. Repro artifacts retain private provenance; review before sharing.
+- Bounded, failure-preserving reduction of captured inputs and decoded instruction sequences,
+  with repeated fresh-worker confirmation, detailed failure predicates and a portable final case.
 
 ## Important coverage limits
 
@@ -314,8 +316,45 @@ artifacts may be from earlier retries, so copied artifacts are never used as fre
 The descriptor is written last; a failed export without `repro.json` is not replayable.
 
 Bundles contain shader bytes and original paths, resource snapshots and diagnostics. Keep them
-out of version control and review redistribution rights before sharing. Export/replay is the
-foundation for minimization, not an instruction reducer or pass-level bisection implementation.
+out of version control and review redistribution rights before sharing.
+
+### Failure-preserving reduction
+
+```powershell
+.\build-kyty\shader-lab.exe minimize --bundle runs/repro-case --worker .\build-kyty\shader-kyty-worker.exe --output runs/reduced-case --max-attempts 128 --confirmations 2
+```
+
+The worker executable must match the original bundle's content hash. To investigate a different
+compiler, replay with that compiler and export its new result first. The reducer checks that the
+original failure repeats, proposes reductions, and accepts each proposal only after every requested
+confirmation matches. Final confirmation attempts are reserved even if the search budget runs out.
+The process limit includes baseline and final runs; confirmations must be 2–5. An old bundle
+without a recorded deadline needs `--timeout-ms`. No cached compiler results are used.
+
+Supported predicates are detailed unsupported-instruction diagnostics, SPIR-V validator messages
+under the same validation environment, and crashes with an explicit Kyty assertion line, phase
+and exit code. Only `hash=0x...` values in assertion lines are normalized; addresses, PCs and source
+locations are not. Validator instruction indices may shift, but diagnostic text and severity must
+match. A different failure with the same status is rejected. Success, timeout, missing-context,
+generic crash and incomplete diagnostics are not minimization oracles. Matching the predicate is
+an observation, not proof of identical root cause.
+
+Transformations remove captured memory ranges, zero nonessential user-data/memory words, and replace
+whole decoded instructions with `S_NOP 0` words. They do **not** shorten code or shift PCs. Literal
+words belonging to an instruction are replaced together. Only a fresh, content-bound decoder
+inventory supplies instruction boundaries; otherwise code reduction is explicitly unavailable.
+Header bytes, code extent, register-array positions and captured memory addresses are retained.
+Modified code is marked as derived evidence, not byte-identical source-game data. No transformation
+claims to preserve shader outputs, timing, synchronization, resource behavior or gameplay.
+
+`minimization.json` checkpoints every attempt, predicate and accepted change. Each proposal retains
+its exact inputs and fresh run directories. `minimized-bundle` is emitted only after final checks
+pass, and works with the ordinary `replay` command. A `fixed_point` means no single available
+transformation was accepted at the final state, not a global minimum. `budget_exhausted` returns the
+best confirmed case with `minimality: incomplete_search`; inspect the state even after exit 0.
+Exit 4 means the baseline/final failure did not repeat, and 2 means setup or evidence was invalid.
+Keep enough disk space for retained attempts: the process-count limit is not a disk quota.
+Pass-level bisection remains separate work.
 
 ## Outcomes
 
@@ -419,7 +458,8 @@ Use result JSON rather than a successful process exit as your regression gate.
 ## Next development milestones
 
 Work is tracked against all five items below. Multi-context campaign orchestration
-is implemented, together with portable repro export/replay. ZIP32 and compressed clear SELF
+is implemented, together with portable repro export/replay and failure-preserving reduction.
+ZIP32 and compressed clear SELF
 adapters, nested payload budgets and reference-output comparison are added
 components of milestones 2 and 3; neither milestone is complete. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
