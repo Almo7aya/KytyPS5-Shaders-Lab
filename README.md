@@ -50,6 +50,8 @@ packaged binaries, checksums and corresponding sources.
   explicitly selected worker. Repro artifacts retain private provenance; review before sharing.
 - Bounded, failure-preserving reduction of captured inputs and decoded instruction sequences,
   with repeated fresh-worker confirmation, detailed failure predicates and a portable final case.
+- Upstream pass entry/return traces, intentional prefix stops with IR evidence, and repeated
+  prefix bisection of reproducible compiler assertions. This localizes failure, not semantic defects.
 
 ## Important coverage limits
 
@@ -90,9 +92,14 @@ ctest --test-dir build-kyty -R '^shader_lab_' --output-on-failure
 
 Outputs: `build-kyty/shader-lab.exe`, `build-kyty/shader-kyty-worker.exe` and its required
 `libwinpthread-1.dll`. Keep the DLL beside the worker. The scanner itself does not need that DLL.
-The first worker build is sizable: it reuses the upstream standalone-test link closure, which
-includes renderer/library dependencies, even though this entry point never initializes a GPU.
-Subsequent compiler edits rebuild incrementally. The selected checkout's source files are not edited.
+The worker links the smaller compiler-only library, but the first configuration still visits
+upstream dependency setup. Subsequent compiler edits rebuild incrementally. Pass checkpoints use
+a generated build-tree copy of the upstream pipeline; the selected checkout's files are not edited.
+
+Windows executables opt into long paths. Deep datasets/repro directories also require the Windows
+`LongPathsEnabled` system policy; the application never changes this machine-wide setting.
+See [Microsoft's long-path requirements](https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation).
+CI enables the policy only on its disposable Windows runner and exercises long paths.
 
 For a lightweight extraction/reporting-only build:
 
@@ -356,7 +363,47 @@ transformation was accepted at the final state, not a global minimum. `budget_ex
 best confirmed case with `minimality: incomplete_search`; inspect the state even after exit 0.
 Exit 4 means the baseline/final failure did not repeat, and 2 means setup or evidence was invalid.
 Keep enough disk space for retained attempts: the process-count limit is not a disk quota.
-Pass-level bisection remains separate work.
+
+### Compiler pass tracing and assertion bisection
+
+Add `"diagnostics": {"pass_trace": true}` to a compiler profile to record ordered
+entry/return events in `pass-trace.json`. `shader-kyty-worker --compiler-info` lists the
+versioned catalog: frontend translation, SSA and cleanup passes, resource planning and
+materialization, specialization, binding allocation and SPIR-V emission. The conditional
+read-lane cleanup sequence is one grouped boundary. Decode/CFG setup before frontend
+translation and validation after emission are not individually instrumented passes.
+
+Adding `"stop_after_pass": N` inside `diagnostics` stops after that catalog index and
+returns `pass_checkpoint_reached`, **not** a compilation/validation success. The worker
+retains `pass-stop.ir` when IR exists and its text fits within 64 MiB. Index 0 is the
+translation input boundary and has no IR. Pass return does not certify intermediate IR;
+upstream cleanup stages can temporarily have invariants that only later stages restore.
+
+To locate a reproducible fatal assertion from a normal, complete compiler attempt:
+
+```powershell
+.\build-kyty\shader-lab.exe bisect-passes --bundle runs/repro-case --worker .\build-kyty\shader-kyty-worker.exe --output runs/pass-search --confirmations 2
+```
+
+The bundle and worker must match, and the original detailed assertion must repeat before
+instrumentation is enabled. A traced baseline must reproduce the same phase, assertion text
+and exit code. The search runs each prefix in a fresh isolated process, requiring 2–5 identical
+observations, then separately reconfirms both adjacent endpoints. It never skips or reorders
+passes. Changed assertions, missing traces, malformed identities, timeouts and unstable event
+sequences cannot establish a boundary. Source files and the original bundle remain untouched.
+
+`pass-bisection.json` retains every probe and fresh run path. `localized` means the first
+unreachable checkpoint and its preceding completed checkpoint repeated; inspect the final
+entry/return event to distinguish a failure inside a pass from code between checkpoints.
+`after_last_checkpoint` identifies a failure beyond all instrumented returns. Neither outcome
+proves which earlier pass introduced the bug. Failures before the first checkpoint or changed
+instrumented baselines remain unlocalized. Exit 0 means the boundary was confirmed, 4 means
+inconclusive/unlocalized, and 2 means invalid setup/evidence. Probe count is bounded by the
+fixed catalog and confirmation count; retained logs/IR are not subject to a total disk quota.
+
+This is assertion-prefix bisection, not pass-disable experimentation or a shader-output oracle.
+It does not bisect SPIR-V validator errors or numerical/rendering differences. Those need
+intermediate-state predicates or reference execution; ordinary output comparison is not enough.
 
 ## Outcomes
 
@@ -450,6 +497,7 @@ A match is scoped to these recorded outputs, never a general shader-correctness 
 | `resource_context_unresolved` | Materialization could not resolve supplied/assumed descriptor state. |
 | `worker_crash_or_error`, `timeout` | Isolated worker failed; inspect last phase and log, not just exit code. |
 | `adapter_error`, `invalid_input` | Request/profile or extracted input could not be used. |
+| `pass_checkpoint_reached` | An explicitly requested compiler prefix returned; no validation or semantic verdict. |
 | `runner_error`, `worker_protocol_error` | Orchestration/artifact problem rather than a shader verdict. |
 
 CLI exit codes: `0` means the command completed (individual shader failures remain in results),
@@ -461,8 +509,9 @@ Use result JSON rather than a successful process exit as your regression gate.
 
 Work is tracked against all five items below. Multi-context campaign orchestration
 is implemented, together with portable repro export/replay and failure-preserving reduction.
-The worker now has a smaller compiler-library source/link boundary; standalone upstream
-configuration and pass-level bisection are still open.
+The worker now has a smaller compiler-library source/link boundary, pass traces and
+assertion-prefix bisection; standalone upstream configuration and semantic pass bisection
+are still open.
 ZIP32 and compressed clear SELF
 adapters, nested payload budgets and reference-output comparison are added
 components of milestones 2 and 3; neither milestone is complete. The remaining

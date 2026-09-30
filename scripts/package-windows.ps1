@@ -40,6 +40,7 @@ foreach ($file in @('shader-lab.exe', 'shader-kyty-worker.exe', 'libwinpthread-1
     Copy-Item -LiteralPath (Join-Path $buildRoot $file) -Destination $binary
 }
 Copy-Item -LiteralPath (Join-Path $buildRoot 'shader-compiler-sources.txt') -Destination $binary
+Copy-Item -LiteralPath (Join-Path $buildRoot 'shader-lab-generated') -Destination $binary -Recurse
 foreach ($file in @('LICENSE', 'README.md', 'THIRD_PARTY.md', 'docs', 'profiles')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $binary -Recurse
 }

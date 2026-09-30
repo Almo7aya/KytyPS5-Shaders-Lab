@@ -40,6 +40,15 @@ if(sl_compiler_source_count GREATER_EQUAL sl_full_test_source_count)
   message(FATAL_ERROR "Compiler source boundary did not reduce the upstream full-test source set")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/CompilerPassOverlay.cmake")
+set(sl_pipeline_original "${KYTY_ROOT}/src/graphics/shader/recompiler/ShaderRecompiler.cpp")
+set(sl_pipeline_overlay "${CMAKE_BINARY_DIR}/shader-lab-generated/ShaderRecompiler.cpp")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/shader-lab-generated")
+sl_make_pass_overlay("${sl_pipeline_original}" "${sl_pipeline_overlay}")
+set(sl_compiler_manifest_sources ${sl_compiler_sources})
+list(REMOVE_ITEM sl_compiler_sources "${sl_pipeline_original}")
+list(APPEND sl_compiler_sources "${sl_pipeline_overlay}")
+
 # Preserve upstream directory-scoped flags explicitly on this target, including
 # platform/runtime ABI choices. Do not change the independent scanner's directory.
 function(sl_add_compiler_library)
@@ -89,6 +98,7 @@ set_property(TARGET shader_cfg_tests PROPERTY LINK_LIBRARIES shader_lab_kyty_com
 set_property(TARGET shader_cfg_tests PROPERTY INTERFACE_LINK_LIBRARIES "")
 if(MSVC)
   target_link_libraries(shader_cfg_tests onecore)
+  target_sources(shader_cfg_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/windows.manifest")
 endif()
 set_target_properties(shader_cfg_tests PROPERTIES OUTPUT_NAME shader-kyty-worker RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}" CXX_INCLUDE_WHAT_YOU_USE "" CXX_CLANG_TIDY "")
 if(MSVC)
@@ -106,9 +116,12 @@ target_compile_definitions(shader_lab_kyty_compiler PRIVATE
   "SL_FULL_TEST_SOURCE_COUNT=${sl_full_test_source_count}")
 # A source manifest makes the compiler-only boundary reviewable in CI artifacts.
 set(sl_compiler_manifest "compiler_interface=1\nkyty_revision=${SL_KYTY_REV}\n")
-foreach(sl_source IN LISTS sl_compiler_sources)
+foreach(sl_source IN LISTS sl_compiler_manifest_sources)
   file(RELATIVE_PATH sl_relative "${KYTY_ROOT}" "${sl_source}")
   string(APPEND sl_compiler_manifest "${sl_relative}\n")
 endforeach()
+file(SHA256 "${sl_pipeline_original}" sl_pipeline_original_hash)
+file(SHA256 "${sl_pipeline_overlay}" sl_pipeline_overlay_hash)
+string(APPEND sl_compiler_manifest "pass_catalog=1\npass_overlay=shader-lab-generated/ShaderRecompiler.cpp\noriginal_pipeline_sha256=${sl_pipeline_original_hash}\noverlay_pipeline_sha256=${sl_pipeline_overlay_hash}\n")
 file(WRITE "${CMAKE_BINARY_DIR}/shader-compiler-sources.txt" "${sl_compiler_manifest}")
 add_custom_target(shader-kyty-worker DEPENDS shader_cfg_tests)

@@ -99,6 +99,7 @@ const defined = value => value === undefined || value === null ? 'Not recorded' 
 const pre = value => '<pre>' + esc(typeof value === 'string' ? value : pretty(value)) + '</pre>';
 const pair = (label, value, mono=false) => '<dt>'+esc(label)+'</dt><dd'+(mono?' class="mono"':'')+'>'+esc(defined(value))+'</dd>';
 const OUTCOMES = {
+ pass_checkpoint_reached: ['untested','Diagnostic stop','Requested compiler prefix completed','Compilation stopped intentionally at a pass checkpoint. Intermediate IR and pass return are not validation or semantic correctness.','Inspect pass-trace.json and pass-stop.ir. Remove stop_after_pass to run the complete compiler; use bisect-passes on a reproducible assertion bundle.'],
  spirv_valid_under_profile: ['valid','SPIR-V valid','Structurally valid; semantics unverified','Kyty emitted a module that passed SPIRV-Tools under the recorded profile. No GPU/reference execution was performed.','Preserve this profile as a regression baseline. To test correctness, replay controlled resources and compare outputs against an independent trusted reference.'],
  spirv_invalid_under_profile: ['failed','SPIR-V invalid','Generated module failed validation','The validator rejected the emitted module in the recorded environment. It is not structurally valid under this profile.','Inspect validator messages and shader.spvasm, then trace the offending operation through final.ir and the SPIR-V emitter. Confirm the profile matches the intended stage/state.'],
  resource_context_unresolved: ['blocked','Needs resource context','Compilation blocked by unresolved resources','The worker could not materialize the required resources from the supplied or assumed user-data and memory.','Inspect memory-reads.json and capture the missing descriptor/user-data memory. Retry with an explicit context profile; do not substitute fabricated descriptors.'],
@@ -222,6 +223,7 @@ function contextHtml(c){
 const ARTIFACT_GROUPS=[
  ['Disassembly & control flow',[['guest.asm','Decoded guest instructions'],['instructions.json','Instruction inventory and opcode histogram'],['native-cfg.txt','Native control-flow graph'],['cfg.json','Control-flow blocks and edges'],['cfg.dot','Graphviz control-flow graph'],['cfg.txt','Translated control-flow dump']]],
  ['Translation & resources',[['translated.ir','Intermediate representation after translation'],['final.ir','Final intermediate representation'],['header-registers.json','Header register values'],['memory-reads.json','Resource materialization read trace']]],
+ ['Compiler passes',[['pass-trace.json','Ordered upstream pass entry/return checkpoints'],['pass-stop.ir','IR at an intentional prefix stop; not a correctness verdict']]],
  ['SPIR-V output',[['shader.spv','Emitted binary module'],['shader.spvasm','Human-readable SPIR-V assembly']]],
  ['Reproduction & worker evidence',[['request.json','Exact worker request and selected profile'],['response.json','Worker response and diagnostics'],['result.json','Runner outcome and timing'],['phase.json','Last compiler phase checkpoint'],['worker.log','Complete worker log']]]
 ];

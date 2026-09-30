@@ -17,6 +17,7 @@ void usage() {
   shader-lab repro --dataset DATASET --results RUN/results.json --case CASE_ID --output NEW_BUNDLE
   shader-lab replay --bundle BUNDLE --worker EXE --output NEW_RUN [--timeout-ms N]
   shader-lab minimize --bundle BUNDLE --worker EXE --output NEW_DIRECTORY [--max-attempts N] [--confirmations N] [--timeout-ms N]
+  shader-lab bisect-passes --bundle BUNDLE --worker EXE --output NEW_DIRECTORY [--confirmations N] [--timeout-ms N]
 Scan recursively inspects all regular files, not just eboot.bin. Game files are read-only.
 No guest execution. No decryption. Unsupported containers need prior unpacking.
 Compiler success and valid SPIR-V do NOT prove rendering/semantic correctness.
@@ -46,7 +47,8 @@ int main(int argc, char **argv) {
             {"verify", {"--reference", "--observed", "--output"}},
             {"repro", {"--dataset", "--results", "--case", "--output"}},
             {"replay", {"--bundle", "--worker", "--output", "--timeout-ms"}},
-            {"minimize", {"--bundle", "--worker", "--output", "--timeout-ms", "--max-attempts", "--confirmations"}}};
+            {"minimize", {"--bundle", "--worker", "--output", "--timeout-ms", "--max-attempts", "--confirmations"}},
+            {"bisect-passes", {"--bundle", "--worker", "--output", "--timeout-ms", "--confirmations"}}};
         if (!allowed.contains(command))
             throw std::runtime_error("unknown command");
         for (int i = 2; i < argc; ++i) {
@@ -123,6 +125,15 @@ int main(int argc, char **argv) {
                 number("--timeout-ms", 0), number("--max-attempts", 128), unsigned(confirmations)});
             std::cout << result.dump(2) << "\n";
             return result.value("final_verified", false) ? 0 : 4;
+        }
+        if (command == "bisect-passes") {
+            auto confirmations = number("--confirmations", 2);
+            if (confirmations < 2 || confirmations > 5)
+                throw std::runtime_error("confirmations must be 2..5");
+            auto result = sl::bisect_passes({path("--bundle"), path("--worker"), path("--output"),
+                                            number("--timeout-ms", 0), unsigned(confirmations)});
+            std::cout << result.dump(2) << "\n";
+            return result.value("boundary_verified", false) ? 0 : 4;
         }
         if (command == "inspect") {
             if (!args.contains("--hash"))

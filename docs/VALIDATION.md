@@ -46,6 +46,13 @@ is added; use the test output from your build as the authoritative result.
   two-dword literal instruction without moving the failing PC. This is compiler triage, not GPU testing.
 - Versioned compiler-library identity, smaller selected source set, and unchanged real-worker
   translation/validation and reduction checks through the thin process entry point.
+- Synthetic pass-prefix bisection at the first/middle/last boundaries and after emission,
+  changed-assertion rejection, invalid/missing traces, fresh workers and output protection.
+- Real compiler tracing with unchanged SPIR-V, every requested catalog stop with IR hashes,
+  invalid checkpoint rejection, and an upstream invalid-scalar-pair assertion localized to
+  frontend translation. These exercise actual compiler calls, not a mock pass implementation.
+- Deep filesystem paths exceeding the legacy Windows path limit; the hosted Windows runner
+  enables the required OS policy and all three executables embed a long-path-aware manifest.
 - Report data joins, empty/extraction-only datasets and unknown/unmatched outcomes.
 - HTML/script escaping, malformed UTF-8, exact 64-bit origin offsets and safe artifact URLs.
 

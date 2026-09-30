@@ -146,7 +146,10 @@ jobs:
       - name: Build scanner, worker and tests
         run: cmake --build build-release --target shader-lab shader-kyty-worker shader-lab-tests --parallel 2
       - name: Test including real compiler integration
-        run: ctest --test-dir build-release -R '^shader_lab_' --output-on-failure
+        run: |
+          # This modifies only the disposable hosted runner, not users' machines.
+          Set-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1
+          ctest --test-dir build-release -R '^shader_lab_' --output-on-failure
       - name: Package binaries, notices and corresponding sources
         env:
           KYTY_REPOSITORY: ${{ needs.resolve.outputs.repository }}

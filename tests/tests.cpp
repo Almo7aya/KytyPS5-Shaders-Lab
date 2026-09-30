@@ -1,4 +1,5 @@
 #include "shader_lab/lab.hpp"
+#include "shader_lab/compiler_trace.hpp"
 #include <iostream>
 #include <thread>
 #ifdef SL_HAVE_ZSTD
@@ -11,6 +12,9 @@ unsigned repro_tests(const fs::path &root, Bytes shader, const fs::path &worker)
 unsigned minimize_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned minimize_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 bool minimize_fixture_worker(const json &request);
+int pass_fixture_worker(const json &request);
+unsigned pass_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned pass_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -61,8 +65,14 @@ std::vector<uint8_t> elf() {
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--compiler-info") {
+            std::cout << json{{"pass_catalog", compiler_pass_catalog()}}.dump();
+            return 0;
+        }
         if (argc == 3 && std::string(argv[1]) == "--request") {
             auto q = read_json(path_from(argv[2]));
+            if (auto result = pass_fixture_worker(q); result >= 0)
+                return result;
             if (minimize_fixture_worker(q))
                 return 0;
             auto out = path_from(q["output"].get<std::string>());
@@ -236,6 +246,11 @@ int main(int argc, char **argv) {
                 fs::remove_all(p, ec);
             }
         } cleanup{root};
+        const auto long_file = root / std::string(120, 'a') / std::string(120, 'b') / "fixture.json";
+        test(path_text(long_file).size() > 260, "long-path fixture exceeds legacy Windows limit");
+        atomic_json(long_file, {{"long_path", true}});
+        test(read_json(long_file).at("long_path") == true, "long-path JSON write/read round trip");
+        test(hash_file(long_file).size() == 64, "long-path file mapping and hashing");
         checks += reference_tests(root / "reference-fixtures");
         write_bytes(root / "games/Game/eboot.bin", b);
         write_bytes(root / "games/Game/copy.bin", b);
@@ -255,6 +270,7 @@ int main(int argc, char **argv) {
         auto exe = fs::absolute(path_from(argv[0]));
         checks += repro_tests(root / "repro-fixtures", b, exe);
         checks += minimize_tests(root / "minimize-fixtures", header(), exe);
+        checks += pass_tests(root / "pass-fixtures", header(), exe);
         RunOptions options{root / "dataset", root / "run", exe, profile, 2, 5000, 0, true};
         auto r = run(options);
         test(r["status_counts"]["fixture_pass"] == 1, "isolated process protocol");
@@ -433,6 +449,7 @@ int main(int argc, char **argv) {
             test(real["status_counts"].value("spirv_valid_under_profile", 0) == 1,
                  "real Kyty end-program SPIR-V validation");
             checks += minimize_real_tests(root / "real-minimization", header(), options.worker);
+            checks += pass_real_tests(root / "real-passes", header(), options.worker);
         }
         std::cout << "PASS: " << checks << " checks (fixtures; no guest/GPU conformance)\n";
         return 0;

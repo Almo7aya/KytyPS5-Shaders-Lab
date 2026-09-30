@@ -10,6 +10,7 @@
 #include "graphics/shader/shader.h"
 #include "kytyGitVersion.h"
 #include "shader_lab/compiler.hpp"
+#include "shader_lab/compiler_trace.hpp"
 #include "spirv-tools/libspirv.hpp"
 #include <algorithm>
 #include <atomic>
@@ -20,6 +21,15 @@
 using namespace Libs::Graphics;
 namespace sr = Libs::Graphics::ShaderRecompiler;
 namespace {
+struct PassTrace {
+    bool enabled = false;
+    int stop_after = -1;
+    unsigned next = 0;
+    bool active = false;
+    sl::fs::path output;
+    sl::json record;
+} pass_trace;
+
 struct Memory {
     struct Range {
         uint64_t base;
@@ -65,12 +75,46 @@ void only_keys(const sl::json &j, const std::set<std::string> &keys) {
             throw std::runtime_error("unknown profile field: " + it.key());
 }
 } // namespace
+void sl::compiler_pass(unsigned index, bool completed, const sr::IR::Program *ir) {
+    if (!pass_trace.enabled)
+        return;
+    auto &trace = pass_trace;
+    if (index != trace.next || completed != trace.active)
+        throw std::runtime_error("compiler pass catalog/order mismatch");
+    const auto catalog = compiler_pass_catalog();
+    if (index >= catalog.at("passes").size())
+        throw std::runtime_error("unknown compiler pass checkpoint");
+    const auto &pass = catalog.at("passes").at(index);
+    trace.record["events"].push_back({{"index", index}, {"name", pass.at("name")},
+                                     {"state", completed ? "completed" : "started"}});
+    trace.record["last"] = trace.record["events"].back();
+    atomic_json(trace.output / "pass-trace.json", trace.record);
+    trace.active = !completed;
+    if (!completed)
+        return;
+    ++trace.next;
+    if (trace.stop_after == int(index)) {
+        if (ir) {
+            auto dump = sr::IR::ProgramToString(*ir);
+            if (dump.size() <= 64 * 1024 * 1024) {
+                write_text(trace.output / "pass-stop.ir", dump);
+                trace.record["stop_ir_sha256"] = hash_file(trace.output / "pass-stop.ir");
+            } else {
+                trace.record["stop_ir_omission"] = "exceeds_64_mib";
+            }
+            atomic_json(trace.output / "pass-trace.json", trace.record);
+        }
+        throw CompilerCheckpointStop{index};
+    }
+}
+
 sl::json sl::compiler_info_v1() {
     return {{"schema", 1}, {"compiler_interface", 1}, {"worker_protocol", 1},
             {"kyty_revision", KYTY_GIT_REVISION}, {"configured_checkout", SL_KYTY_REV},
             {"link_mode", "compiler_library"}, {"upstream_source_count", SL_COMPILER_SOURCE_COUNT},
             {"upstream_full_test_source_count", SL_FULL_TEST_SOURCE_COUNT},
-            {"execution", "compiler_only"}, {"process_contract", "one_request_per_process"}};
+            {"execution", "compiler_only"}, {"process_contract", "one_request_per_process"},
+            {"pass_catalog", compiler_pass_catalog()}};
 }
 
 int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
@@ -115,12 +159,33 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         }
         const auto &profile = request.at("profile");
         only_keys(profile, {"schema", "mode", "host_subgroup_size", "wave_size", "stage",
-                            "user_data", "memory", "compute", "pixel", "vertex", "shader_base"});
+                            "user_data", "memory", "compute", "pixel", "vertex", "shader_base",
+                            "diagnostics"});
         if (profile.value("schema", 1) != 1)
             throw std::runtime_error("unsupported profile schema");
         auto mode = profile.value("mode", "header_probe");
         if (mode != "header_probe" && mode != "context_snapshot")
             throw std::runtime_error("mode must be header_probe or context_snapshot");
+        if (profile.contains("diagnostics")) {
+            const auto &diagnostics = profile.at("diagnostics");
+            only_keys(diagnostics, {"pass_trace", "stop_after_pass"});
+            pass_trace.enabled = diagnostics.value("pass_trace", false);
+            if (diagnostics.contains("stop_after_pass")) {
+                const auto &index = diagnostics.at("stop_after_pass");
+                if (!pass_trace.enabled || !index.is_number_integer() ||
+                    index.get<int64_t>() < 0 || index.get<uint64_t>() >= compiler_pass_catalog().at("passes").size())
+                    throw std::runtime_error("stop_after_pass requires pass_trace and an index from the compiler pass catalog");
+                pass_trace.stop_after = index.get<int>();
+            }
+            if (pass_trace.enabled) {
+                pass_trace.output = out;
+                pass_trace.record = {{"schema", 1}, {"catalog_schema", 1},
+                    {"id", request.at("id")}, {"code_sha256", sl::sha256(bytes)},
+                    {"configured_checkout", SL_KYTY_REV}, {"events", sl::json::array()},
+                    {"semantic_correctness", "not_tested"}};
+                sl::atomic_json(out / "pass-trace.json", pass_trace.record);
+            }
+        }
         result["context_mode"] = mode;
         if (mode == "context_snapshot" &&
             (!profile.contains("stage") || !profile.contains("user_data") ||
@@ -333,6 +398,8 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         if (subgroup != 32 && subgroup != 64)
             throw std::runtime_error("host_subgroup_size must be 32 or 64");
         set_phase("translate");
+        sl::compiler_pass(0, false);
+        sl::compiler_pass(0, true);
         auto translated = sr::TranslateProgram(code, options);
         if (translated.skip_dispatch)
             return finish("unsupported_ray_tracing");
@@ -341,7 +408,9 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         result["ir_blocks"] = translated.program.blocks.size();
         result["dispatcher_fallback"] = translated.program.dispatcher_fallback;
         set_phase("materialize");
+        sl::compiler_pass(12, false, &translated.program);
         auto plan = sr::IR::ExtractResourcePlan(translated.program);
+        sl::compiler_pass(12, true, &translated.program);
         sr::IR::ResourceSnapshot snapshot;
         sr::IR::ResourceSpecialization specialization;
         Memory memory;
@@ -377,12 +446,14 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
                                          .read_memory = read_memory,
                                          .userdata = &memory,
                                          .read_specialization_memory = read_memory};
+        sl::compiler_pass(13, false, &translated.program);
         bool materialized = sr::IR::MaterializeResources(plan, runtime, snapshot, specialization);
         sl::atomic_json(out / "memory-reads.json", memory.reads);
         if (!materialized) {
             result["missing_memory"] = memory.missing;
             return finish("resource_context_unresolved");
         }
+        sl::compiler_pass(13, true, &translated.program);
         set_phase("emit");
         auto compiled = sr::CompileProgram(std::move(translated), options, specialization);
         sl::write_text(out / "final.ir", compiled.ir_dump);
@@ -407,6 +478,13 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         result["validator_messages"] = diagnostics;
         result["validation_environment"] = "Vulkan 1.3";
         return finish(valid ? "spirv_valid_under_profile" : "spirv_invalid_under_profile");
+    } catch (const CompilerCheckpointStop &stop) {
+        result["status"] = "pass_checkpoint_reached";
+        result["last_phase"] = phase;
+        result["pass_checkpoint"] = compiler_pass_catalog().at("passes").at(stop.index);
+        result["reason"] = "Diagnostic prefix stopped intentionally; no validation or semantic verdict";
+        sl::atomic_json(out / "response.json", result);
+        return 0;
     } catch (const std::exception &ex) {
         if (!out.empty() && result.contains("id")) {
             result["status"] = "adapter_error";

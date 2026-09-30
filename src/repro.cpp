@@ -96,7 +96,8 @@ json export_repro(const fs::path &dataset_path, const fs::path &results_path,
         bundle["files"][name] = hash_file(out / name);
     constexpr std::array names = {"worker.log", "phase.json", "response.json", "instructions.json",
         "guest.asm", "native-cfg.txt", "cfg.dot", "cfg.json", "header-registers.json", "cfg.txt",
-        "translated.ir", "memory-reads.json", "final.ir", "shader.spv", "shader.spvasm"};
+        "translated.ir", "memory-reads.json", "final.ir", "shader.spv", "shader.spvasm",
+        "pass-trace.json", "pass-stop.ir"};
     uint64_t copied = 0;
     if (row.contains("artifacts")) {
         auto relative = path_from(row.at("artifacts").get<std::string>());

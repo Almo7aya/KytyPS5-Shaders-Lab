@@ -63,6 +63,9 @@ The binary ZIP also includes `shader-compiler-sources.txt`, the exact source lis
 the compiler-only library. `BUILD-INFO.json` records its interface version and link mode. The
 corresponding-source bundle still preserves the full upstream checkout and dependency sources;
 the smaller link boundary does not yet bypass upstream's configure-time dependency downloads.
+The binary ZIP also includes `shader-lab-generated/ShaderRecompiler.cpp`, the exact generated
+pipeline with observation hooks. Its hash and the original upstream file hash are recorded
+in the compiler source manifest; the source archive contains the recipe to regenerate it.
 
 Extract the binary ZIP and keep its files together. A current Microsoft Visual
 C++ x64 runtime may be required. No Qt launcher, Vulkan device, game files or

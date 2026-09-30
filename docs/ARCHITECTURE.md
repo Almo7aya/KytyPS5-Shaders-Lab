@@ -33,6 +33,10 @@ inputs. It operates only on fresh output copies, reserves final confirmations an
 accepted/rejected trials. Code reduction requires fresh hash-bound decoder extents and substitutes
 whole instructions with NOP words without relocating code. This preserves observed failure evidence,
 not program semantics; reductions and incomplete search are recorded explicitly.
+`pass_bisect.cpp` uses the same detailed assertion predicate with a versioned upstream pass
+catalog. It validates a normal baseline and a traced baseline, probes prefixes in fresh
+processes, then reconfirms adjacent completed/unreachable boundaries. It does not disable
+passes, validate arbitrary intermediate IR, or infer which pass introduced a semantic error.
 `analysis.cpp` implements local research/triage operations.
 `kyty_compiler.cpp` is the source adapter tied to Kyty's compiler API.
 `kyty_worker.cpp` is a thin process entry point using the versioned source interface in
@@ -64,6 +68,21 @@ Shader failures remain response statuses, and fatal assertions remain isolated w
 This reduces compilation and linking, but upstream configuration still visits its dependency setup,
 including unrelated download/configure steps. Removing that configure-time dependency remains work
 for a standalone upstream library build entry point; no download-speed claim is made here.
+
+`CompilerPassOverlay.cmake` generates an instrumented copy of `ShaderRecompiler.cpp` in the
+build tree. Exact unique statement/block anchors fail configuration on unsupported pipeline
+changes. The source manifest records original/generated SHA-256 values, and packages include
+the generated source. Only observation hooks are added; ordinary compilation retains the same
+pass calls and order. Hooks are inert unless profile diagnostics enable them. Explicit prefix
+stops unwind through a dedicated internal exception and return a diagnostic-only status.
+Upstream filenames remain in diagnostics, but inserted hooks shift pipeline line numbers;
+consult the packaged generated copy. Assertions in unmodified pass files retain their locations.
+
+The trace records case identity, code hash, configured checkout and ordered entry/return events.
+The bisection runner accepts only the worker's matching catalog and fresh case-contained traces.
+An assertion after a completed boundary but before the next entry is not attributed to that next
+pass. Repeated observations reduce nondeterministic false localization; they do not prove that
+the failure is deterministic or identify its root cause. No GPU is created by these diagnostics.
 
 The worker reports the generated upstream
 revision, configured clean/dirty identity and its executable content hash (in the parent result).

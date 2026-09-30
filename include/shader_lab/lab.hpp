@@ -100,6 +100,12 @@ struct MinimizeOptions {
 };
 json failure_signature(const json &result);
 json minimize_repro(const MinimizeOptions &options);
+struct PassBisectOptions {
+    fs::path bundle, worker, output;
+    uint64_t timeout_ms = 0;
+    unsigned confirmations = 2;
+};
+json bisect_passes(const PassBisectOptions &options);
 json compare(const fs::path &before, const fs::path &after);
 json correlate(const fs::path &dataset, const fs::path &log);
 json inspect(const fs::path &dataset, std::string hash);
