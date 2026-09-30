@@ -54,9 +54,18 @@ are explicitly unsupported rather than approximated with host arithmetic.
 
 Memory support is aligned `GLOBAL_LOAD_DWORD` / `GLOBAL_STORE_DWORD` with a scalar base plus vector
 offset or a vector address pair, and a signed immediate offset. Only declared `u32`/`i32` buffers
-are supported. Cache/other modifiers, flat/scratch modes, images, descriptors, atomics and vector
+are supported. Cache/other modifiers, flat/scratch modes, images, atomics and vector
 memory widths other than one dword are rejected. Addresses must resolve wholly into supplied
 resources with compatible access permissions; guest addresses never become host pointers.
+
+`BUFFER_LOAD_DWORD` / `BUFFER_STORE_DWORD` also support in-range linear descriptor accesses.
+The SGPR resource quartet supplies a 48-bit base, stride and record count. Optional index and
+vector-byte-offset operands, scalar offsets and the unsigned instruction offset are decoded
+independently of Kyty. Supported descriptors use identity selectors, R32_UINT, type zero,
+OOB_SELECT=2 and no swizzle/cache-swizzle/AddTid. Other descriptor modes, modifiers, wraparound
+and out-of-range accesses are refused; hardware OOB zero/drop behavior is not approximated.
+The same captured-resource permissions, pending-load and conflict checks apply. Byte addresses
+can refer to interior ranges of a capture without copying or treating aliases as separate memory.
 
 `S_NOP`, `S_WAITCNT 0` and a final `S_ENDPGM` are supported. A loaded VGPR stays pending until
 the explicit wait; reading or overwriting it earlier is rejected. Loads are modeled from stable
@@ -80,6 +89,9 @@ The trace is diagnostic; it cannot establish model independence or hardware fide
 bit patterns cover wraparound, sign boundaries, shifts and bitwise operations. Wave32/wave64 and
 masked/empty EXEC tests preserve untouched resource bytes. Negative fixtures exercise unsupported
 floating operations, truncation, missing waits, undefined values, bounds and races.
+Descriptor-buffer load/modify/store tests also check fixed wraparound results, independent
+descriptor bounds and rejection of swizzled resources. Their kernel is independently assembled
+from `tests/buffer-increment.s`. Model traces retain separate global and descriptor-buffer counts.
 
 `tests/integer-buffer.s` describes the test kernel. Linux CI assembles it with LLVM's GFX10.3
 assembler and compares the exact encoding; C++ tests also compare their input bytes with that
@@ -92,6 +104,7 @@ Primary references used for this separate implementation:
 - [AMD RDNA2 ISA guide announcement and manual link](https://gpuopen.com/news/rdna2-isa-available/).
 - [LLVM 20.1 compute initial-register contract](https://releases.llvm.org/20.1.0/docs/AMDGPUUsage.html#initial-kernel-execution-state).
 - [LLVM 20.1.8 global-memory bitfields](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/Target/AMDGPU/FLATInstructions.td).
+- [LLVM 20.1.8 descriptor-buffer bitfields](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/Target/AMDGPU/BUFInstructions.td).
 - [LLVM global-memory encoding tests](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/test/MC/AMDGPU/flat-global.s),
   [VOP1 tests](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/test/MC/AMDGPU/gfx10_asm_vop1.s),
   [VOP2 tests](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/test/MC/AMDGPU/gfx10_asm_vop2.s).

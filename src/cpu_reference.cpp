@@ -1,6 +1,6 @@
 // GPL-2.0-only. Independently implemented integer model; no Kyty headers/code.
 // Semantics: AMD RDNA2 ISA guide, sections 12.7/12.8 and global memory.
-// Bitfields cross-checked with LLVM llvmorg-20.1.8 FLATInstructions.td and MC tests.
+// Bitfields cross-checked with LLVM llvmorg-20.1.8 FLATInstructions.td/BUFInstructions.td.
 #include "shader_lab/cpu_reference.hpp"
 #include "shader_lab/host_profile.hpp"
 #include <algorithm>
@@ -32,6 +32,8 @@ struct Inst {
     Op op;
     uint32_t pc, a = 0, b = 0, dst = 0, subop = 0, literal = 0;
     int32_t offset = 0;
+    uint32_t soffset = 128;
+    bool buffer = false, idxen = false, offen = false;
 };
 std::vector<Inst> decode(Bytes code) {
     if (code.empty() || code.size() % 4 || code.size() > 16384)
@@ -56,6 +58,21 @@ std::vector<Inst> decode(Bytes code) {
             i.op = Op::Wait; // S_WAITCNT with all counters zero.
         } else if ((w & 0xffff0000u) == 0xbf800000u) {
             i.op = Op::Nop;
+        } else if ((w & 0xffffc000u) == 0xe0300000u || (w & 0xffffc000u) == 0xe0700000u) {
+            i.op = (w & 0x00400000u) ? Op::Store : Op::Load;
+            i.buffer = true;
+            i.idxen = (w & 0x2000u) != 0;
+            i.offen = (w & 0x1000u) != 0;
+            i.offset = int32_t(w & 0xfffu);
+            const auto hi = next();
+            i.a = hi & 255;
+            i.b = ((hi >> 16) & 31) * 4;
+            i.dst = (hi >> 8) & 255;
+            i.soffset = hi >> 24;
+            if ((hi & 0x00e00000u) || i.b > 100 || (i.idxen && i.offen && i.a == 255) ||
+                !(i.soffset <= 103 || (i.soffset >= 128 && i.soffset <= 208)))
+                unsupported("unmodeled buffer modifiers or resource register quartet at byte " +
+                            std::to_string(i.pc));
         } else if ((w & 0xfffff000u) == 0xdc308000u || (w & 0xfffff000u) == 0xdc708000u) {
             i.op = (w & 0x00400000u) ? Op::Store : Op::Load;
             i.offset = int32_t(w & 0xfff);
@@ -209,8 +226,8 @@ CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
             unsupported("dword resources must be aligned");
     }
     std::map<uint64_t, Access> accesses;
-    uint64_t loads = 0, stores = 0, executed = 0;
-    auto memory = [&](uint64_t address, uint64_t thread, bool store, uint32_t value) {
+    uint64_t loads = 0, stores = 0, buffer_loads = 0, buffer_stores = 0, executed = 0;
+    auto memory = [&](uint64_t address, uint64_t thread, bool store, uint32_t value, bool buffer) {
         if (address & 3)
             unsupported("unaligned global access");
         auto [it, inserted] = accesses.emplace(address, Access{thread, false, store});
@@ -237,10 +254,16 @@ CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
             if (store) {
                 for (unsigned b = 0; b < 4; ++b)
                     bytes[offset + b] = uint8_t(value >> (b * 8));
-                ++stores;
+                if (buffer)
+                    ++buffer_stores;
+                else
+                    ++stores;
                 return value;
             }
-            ++loads;
+            if (buffer)
+                ++buffer_loads;
+            else
+                ++loads;
             return uint32_t(integer(bytes, offset, 4));
         }
         unsupported("global access is not wholly backed by a declared resource");
@@ -309,7 +332,30 @@ CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
                         vector[lane][i.dst] = {result, true, false};
                     } else {
                         uint64_t address = 0;
-                        if (i.b == 125)
+                        if (i.buffer) {
+                            const auto lo = read(scalar[i.b]), hi = read(scalar[i.b + 1]);
+                            const auto records = read(scalar[i.b + 2]),
+                                       flags = read(scalar[i.b + 3]);
+                            // Linear dword descriptors only: no swizzle/cache-swizzle/AddTid,
+                            // type 0, identity selectors, R32_UINT format, OOB_SELECT=2.
+                            if ((hi & 0xc0000000u) || flags != 0x20014facu)
+                                unsupported(
+                                    "unmodeled buffer descriptor format, flags or OOB mode");
+                            const uint64_t base = uint64_t(lo) | (uint64_t(hi & 0xffffu) << 32);
+                            const uint64_t stride = (hi >> 16) & 0x3fffu;
+                            const uint64_t extent = stride ? stride * records : records;
+                            const uint64_t index = i.idxen ? read(vector[lane][i.a]) : 0;
+                            const uint64_t offset =
+                                i.offen ? read(vector[lane][i.a + unsigned(i.idxen)]) : 0;
+                            const uint64_t relative =
+                                index * stride + offset + source(i.soffset) + uint32_t(i.offset);
+                            // Reject wrap/OOB instead of inventing hardware zero/drop semantics.
+                            if (relative > UINT32_MAX || extent < 4 || relative > extent - 4 ||
+                                relative > 0xffffffffffffull - base)
+                                unsupported("buffer access wraps or falls outside the modeled "
+                                            "descriptor range");
+                            address = base + relative;
+                        } else if (i.b == 125)
                             address = uint64_t(read(vector[lane][i.a])) |
                                       (uint64_t(read(vector[lane][i.a + 1])) << 32);
                         else {
@@ -320,22 +366,23 @@ CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
                                 unsupported("global address overflow");
                             address = base + offset;
                         }
-                        if (i.offset < 0) {
+                        if (!i.buffer && i.offset < 0) {
                             if (address < uint32_t(-i.offset))
                                 unsupported("global address underflow");
                             address -= uint32_t(-i.offset);
-                        } else {
+                        } else if (!i.buffer) {
                             if (uint32_t(i.offset) > UINT64_MAX - address)
                                 unsupported("global address overflow");
                             address += uint32_t(i.offset);
                         }
                         const uint64_t thread = group * group_threads + start + lane;
                         if (i.op == Op::Store)
-                            memory(address, thread, true, read(vector[lane][i.dst]));
+                            memory(address, thread, true, read(vector[lane][i.dst]), i.buffer);
                         else {
                             if (vector[lane][i.dst].pending)
                                 unsupported("overlapping pending load destinations");
-                            vector[lane][i.dst] = {memory(address, thread, false, 0), true, true};
+                            vector[lane][i.dst] = {memory(address, thread, false, 0, i.buffer),
+                                                   true, true};
                         }
                     }
                 }
@@ -353,6 +400,8 @@ CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
                     {"executed_lane_instructions", executed},
                     {"global_loads", loads},
                     {"global_stores", stores},
+                    {"buffer_loads", buffer_loads},
+                    {"buffer_stores", buffer_stores},
                     {"host_gpu_used", false},
                     {"hardware_conformance", "not_established"}};
     return result;

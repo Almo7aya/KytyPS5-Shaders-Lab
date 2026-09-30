@@ -42,7 +42,7 @@ unsigned cpu_tests(const fs::path &root, Bytes input_header, const fs::path &wor
     auto run_case = [&](const std::vector<uint32_t> &code, unsigned wave, uint64_t exec,
                         unsigned count, const std::vector<uint32_t> &input,
                         const std::vector<uint32_t> &expected, unsigned groups = 1,
-                        const json &host = nullptr) {
+                        const json &host = nullptr, const json &user_data = nullptr) {
         const auto dir = root / std::to_string(serial++), fixture_dir = dir / "fixture";
         auto header = std::vector<uint8_t>(input_header.begin(), input_header.end());
         for (unsigned i = 0; i < 4; ++i)
@@ -67,6 +67,10 @@ unsigned cpu_tests(const fs::path &root, Bytes input_header, const fs::path &wor
                           {"float_mode", 192}}}};
         if (!host.is_null())
             profile["host"] = host;
+        if (!user_data.is_null()) {
+            profile["user_data"] = user_data;
+            profile["compute"]["workgroup_register"] = user_data.size();
+        }
         atomic_json(fixture_dir / "profile.json", profile);
         auto file = [&](const char *name) {
             return json{{"file", name}, {"sha256", hash_file(fixture_dir / name)}};
@@ -193,5 +197,49 @@ unsigned cpu_tests(const fs::path &root, Bytes input_header, const fs::path &wor
                       expected)
                      .at("status") == "unsupported",
              "every incomplete program prefix rejected");
+    const std::vector<uint32_t> buffer_kernel = {0xe0302000u, 0x80000100u, 0xbf8c0000u, 0x4a020281u,
+                                                 0xe0702000u, 0x80000100u, 0xbf810000u};
+    const auto buffer_assembly = read_bytes(fs::path(SL_TEST_SOURCE_DIR) / "buffer-increment.s");
+    const std::string buffer_text(buffer_assembly.begin(), buffer_assembly.end());
+    auto buffer_begin = buffer_text.find(marker);
+    test(buffer_begin != std::string::npos, "buffer assembler envelope present");
+    buffer_begin += marker.size();
+    std::istringstream buffer_encoding(
+        buffer_text.substr(buffer_begin, buffer_text.find('\n', buffer_begin) - buffer_begin));
+    encoded_bytes.clear();
+    while (buffer_encoding >> std::hex >> byte) {
+        test(byte <= 255, "buffer assembler byte bounded");
+        encoded_bytes.push_back(uint8_t(byte));
+    }
+    test(encoded_bytes == bytes(buffer_kernel),
+         "descriptor-buffer kernel matches LLVM-checked envelope");
+    const json descriptor = {0x1000u, 0x00040000u, 32u, 0x20014facu};
+    std::vector<uint32_t> buffer_input, buffer_expected;
+    for (unsigned i = 0; i < 32; ++i) {
+        buffer_input.push_back(initial[i % initial.size()]);
+        buffer_expected.push_back(incremented[i % incremented.size()]);
+    }
+    test(run_case(buffer_kernel, 32, 0xffffffffu, 32, buffer_input, buffer_expected, 1, nullptr,
+                  descriptor)
+                 .at("status") == "match",
+         "independent descriptor-buffer model matches fixed wraparound golden values");
+    auto missing_wait = buffer_kernel;
+    missing_wait.erase(missing_wait.begin() + 2);
+    test(run_case(missing_wait, 32, 0xffffffffu, 32, buffer_input, buffer_expected, 1, nullptr,
+                  descriptor)
+                 .at("status") == "unsupported",
+         "buffer load requires wait before dependent arithmetic");
+    auto short_descriptor = descriptor;
+    short_descriptor[2] = 31;
+    test(run_case(buffer_kernel, 32, 0xffffffffu, 32, buffer_input, buffer_expected, 1, nullptr,
+                  short_descriptor)
+                 .at("status") == "unsupported",
+         "buffer descriptor bounds are checked independently of captured allocation");
+    auto swizzled = descriptor;
+    swizzled[1] = 0x80040000u;
+    test(run_case(buffer_kernel, 32, 0xffffffffu, 32, buffer_input, buffer_expected, 1, nullptr,
+                  swizzled)
+                 .at("status") == "unsupported",
+         "unmodeled swizzled descriptor rejected");
     return checks;
 }

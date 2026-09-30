@@ -73,7 +73,7 @@ jobs:
           persist-credentials: false
       - name: Configure standalone build
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Cross-check independent integer fixture encoding
+      - name: Cross-check CPU and Vulkan fixture encodings with LLVM
         shell: bash
         run: |
           set -euo pipefail
@@ -81,15 +81,17 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y llvm-18
           fi
-          expected=$(sed -n 's@^// EXPECTED: @@p' tests/integer-buffer.s | tr -d ' \r\n')
-          actual=$(llvm-mc-18 -triple=amdgcn -mcpu=gfx1030 -show-encoding tests/integer-buffer.s |
-            sed -n 's/.*encoding: \[\(.*\)\].*/\1/p' | sed 's/0x//g' | tr -d ', \r\n')
-          if [[ -z "$expected" || "$actual" != "$expected" ]]; then
-            echo "Integer fixture encoding differs from LLVM's GFX10.3 assembler" >&2
-            echo "Expected: $expected" >&2
-            echo "Actual:   $actual" >&2
-            exit 1
-          fi
+          for fixture in tests/integer-buffer.s tests/buffer-store.s tests/buffer-increment.s; do
+            expected=$(sed -n 's@^// EXPECTED: @@p' "$fixture" | tr -d ' \r\n')
+            actual=$(llvm-mc-18 -triple=amdgcn -mcpu=gfx1030 -show-encoding "$fixture" |
+              sed -n 's/.*encoding: \[\(.*\)\].*/\1/p' | sed 's/0x//g' | tr -d ', \r\n')
+            if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+              echo "$fixture encoding differs from LLVM's GFX10.3 assembler" >&2
+              echo "Expected: $expected" >&2
+              echo "Actual:   $actual" >&2
+              exit 1
+            fi
+          done
       - name: Build
         run: cmake --build build --parallel 2
       - name: Test
@@ -217,7 +219,7 @@ jobs:
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= \
             -DKYTY_ROOT="$GITHUB_WORKSPACE/_Build/KytyPS5" -DSHADER_LAB_BUILD_KYTY_WORKER=ON
-          cmake --build build-vulkan --target shader-lab-tests shader-vulkan-replay shader_cfg_tests --parallel 2
+          cmake --build build-vulkan --target shader-lab shader-lab-tests shader-vulkan-replay shader_cfg_tests --parallel 2
       - name: Execute real Vulkan golden fixtures on the hosted software device
         run: |
           set -euo pipefail

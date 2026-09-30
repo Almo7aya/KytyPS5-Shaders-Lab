@@ -1,5 +1,6 @@
 #include "shader_lab/lab.hpp"
 #include <iostream>
+#include <sstream>
 using namespace sl;
 namespace {
 std::vector<uint8_t> bytes(const std::vector<uint32_t> &words) {
@@ -9,7 +10,29 @@ std::vector<uint8_t> bytes(const std::vector<uint32_t> &words) {
             data.push_back(uint8_t(word >> (8 * i)));
     return data;
 }
+std::vector<uint8_t> store_kernel() {
+    return bytes({0x7e020287u, 0xe0702000u, 0x80000100u, 0xbf810000u});
+}
 } // namespace
+unsigned vulkan_encoding_tests() {
+    const auto assembly = read_bytes(fs::path(SL_TEST_SOURCE_DIR) / "buffer-store.s");
+    const std::string text(assembly.begin(), assembly.end()), marker = "// EXPECTED: ";
+    const auto position = text.find(marker);
+    if (position == std::string::npos)
+        throw std::runtime_error("Vulkan fixture assembler envelope missing");
+    const auto begin = position + marker.size();
+    std::istringstream words(text.substr(begin, text.find('\n', begin) - begin));
+    std::vector<uint8_t> expected;
+    unsigned value = 0;
+    while (words >> std::hex >> value) {
+        if (value > 255)
+            throw std::runtime_error("Vulkan fixture assembler byte out of range");
+        expected.push_back(uint8_t(value));
+    }
+    if (expected != store_kernel())
+        throw std::runtime_error("Vulkan fixture bytes differ from LLVM-checked assembly envelope");
+    return 1;
+}
 unsigned vulkan_guard_tests(const fs::path &root, const fs::path &worker) {
     fs::create_directories(root / "backend");
     const auto request = root / "request.json";
@@ -36,7 +59,7 @@ unsigned vulkan_real_tests(const fs::path &root, Bytes input_header, const fs::p
         const auto dir = root / std::to_string(serial++), fixture_dir = dir / "fixture";
         // v_mov_b32 v1,7; buffer_store_dword v1,v0,s[0:3],0 idxen; s_endpgm.
         // v0 is local invocation x. Descriptor stride four means each lane writes its own word.
-        const auto code = bytes({0x7e020287u, 0xe0702000u, 0x80000100u, 0xbf810000u});
+        const auto code = store_kernel();
         std::vector<uint8_t> header(input_header.begin(), input_header.end());
         for (unsigned i = 0; i < 4; ++i)
             header[0x44 + i] = uint8_t(code.size() >> (8 * i));
@@ -102,6 +125,24 @@ unsigned vulkan_real_tests(const fs::path &root, Bytes input_header, const fs::p
                 "Each active lane stores literal seven in its own slot; surrounding sentinels "
                 "remain unchanged. Expected bytes are independent of Kyty and Vulkan."}}},
              {"outputs", {{"result", output}}}});
+        if (!partial_exec && !wrong_reference) {
+#ifdef _WIN32
+            const auto cpu_worker = worker.parent_path() / "shader-cpu-reference.exe";
+#else
+            const auto cpu_worker = worker.parent_path() / "shader-cpu-reference";
+#endif
+            const auto reference_result =
+                execute_fixture({fixture_dir / "fixture.json", fixture_dir / "reference.json",
+                                 cpu_worker, dir / "cpu-run", 10000, "cpu", false});
+            if (reference_result.at("status") != "match")
+                throw std::runtime_error(
+                    "independent CPU model did not match Vulkan fixture's golden reference: " +
+                    reference_result.dump());
+            const auto cpu_trace = read_json(dir / "cpu-run/backend/model-trace.json");
+            if (cpu_trace.at("buffer_stores") != wave || cpu_trace.at("host_gpu_used") != false)
+                throw std::runtime_error("CPU descriptor-buffer execution evidence missing");
+            std::cout << "CPU_BUFFER_EVIDENCE " << cpu_trace.dump() << '\n';
+        }
         auto result = execute_fixture({fixture_dir / "fixture.json", fixture_dir / "reference.json",
                                        worker, dir / "run", 60000, "gpu", true});
         const auto wanted = partial_exec ? "unsupported" : wrong_reference ? "mismatch" : "match";
