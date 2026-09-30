@@ -23,6 +23,8 @@ packaged binaries, checksums and corresponding sources.
   not guessed. The 256-byte alignment heuristic is retained and disclosed.
 - Clear SELF load-segment reconstruction, with original-file, ELF-file and virtual-address mappings.
   Candidate bytes must be backed by actual segments, not zero-filled holes.
+- Clear compressed SELF load segments using linked block extents, mixed stored/zlib blocks,
+  optional SHA-256 digest checks, padding validation and per-block provenance.
 - Versioned ZIP adapter for stored/Deflate members, central-directory and streamed-descriptor
   validation, CRC verification, nested traversal and member provenance. Members are never written
   to paths provided by the archive.
@@ -46,7 +48,7 @@ packaged binaries, checksums and corresponding sources.
 ## Important coverage limits
 
 “All regular files visited” is not “all shaders recovered.” Encryption, game-specific archive
-indexes, Oodle/Kraken, ZIP64/multidisk ZIP, 7z/PSARC/Unreal container decoding, compressed SELF segments, unknown-size
+indexes, Oodle/Kraken, ZIP64/multidisk ZIP, 7z/PSARC/Unreal container decoding, unsupported SELF block-table encodings, unknown-size
 or dictionary-dependent Zstandard frames, unsupported nested formats, cross-file bare-header pairing,
 patched/runtime-generated code and dynamically loaded shader libraries can leave shaders undiscovered.
 Container warnings and rejected/unpaired candidates remain in the manifest and report. Use authorized,
@@ -155,9 +157,9 @@ offsets in the original game file.
 
 Nested ZIP/Zstandard scanning retains each member/frame coordinate layer and versioned adapter evidence.
 Per input file, expansion is bounded to 512 MiB total, 256 MiB per frame, four decoded layers
-and 4,096 frame candidates across all layers. Intermediate decoded containers also consume the
+and 4,096 members/frames/SELF blocks across all layers. Intermediate decoded containers also consume the
 budget; it is not reset by nesting. Limit findings disclose incomplete exploration. Clear SELF
-normalization also works inside decoded frames; compressed SELF blocks still need another adapter.
+normalization and supported clear block decompression also work inside decoded frames.
 
 The `zip/1` adapter handles ZIP32 methods 0 (stored) and 8 (Deflate), with or without
 data-descriptor signatures. Local headers must agree with the central directory, and
@@ -165,6 +167,16 @@ member CRCs must match before shader extraction. Encryption, ZIP64, multidisk la
 and unsupported methods produce explicit findings. Archive names are evidence labels,
 with non-ASCII bytes escaped, never output paths. Once a ZIP is recognized, rejected
 members are not scanned again as raw bytes to bypass integrity/encryption checks.
+
+The `self/2` adapter handles clear compressed data with a unique linked extent table
+and compression-window encoding 4 (zlib window 12). It checks block extents, partial
+final blocks, padding encoding and available SHA-256 block digests. Reconstructed
+segment mappings distinguish physical payload ranges from decoded offsets. Encrypted
+data/tables, compressed metadata tables, missing extents and unsupported windows are
+reported, not guessed. Recognized SELF containers do not fall back to raw scanning
+of rejected or encrypted segments. A block digest is an integrity check, not signature
+authentication. Format references: [block writer](https://github.com/flatz/pkg_pfs_tool/blob/main/src/self.c)
+and [entry definitions](https://github.com/flatz/pkg_pfs_tool/blob/main/src/self.h).
 
 ## Reading the HTML report
 

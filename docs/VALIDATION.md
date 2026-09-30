@@ -28,6 +28,8 @@ is added; use the test output from your build as the authoritative result.
 
 - Known hash vectors, malformed headers, truncated/overflowing ELF sections and ambiguous pairs.
 - Clear SELF segment reconstruction and rejection of unsupported encrypted segments.
+- Clear SELF block fixtures with stored/zlib mixtures, partial last blocks, linked extent
+  tables, optional digests, corrupt padding/overlaps, encrypted metadata and archive nesting.
 - Bounded Zstandard payload extraction when enabled.
 - ZIP stored/Deflate members, optional data-descriptor signatures, CRC failures,
   encryption notices, hostile member names, nested archives and explicit ZIP64 gaps.

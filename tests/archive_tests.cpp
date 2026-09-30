@@ -8,6 +8,67 @@ void put(std::vector<uint8_t> &bytes, size_t offset, uint64_t value, unsigned wi
     for (unsigned i = 0; i < width; ++i) bytes.at(offset + i) = uint8_t(value >> (i * 8));
 }
 struct Zip { std::vector<uint8_t> bytes; size_t central, data; };
+std::vector<uint8_t> deflated(Bytes input, int window) {
+    z_stream stream{};
+    if (deflateInit2(&stream, 6, Z_DEFLATED, window, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        throw std::runtime_error("fixture block deflate initialization failed");
+    struct End { z_stream *stream; ~End() { deflateEnd(stream); } } guard{&stream};
+    std::vector<uint8_t> result(deflateBound(&stream, uLong(input.size())));
+    stream.next_in = const_cast<Bytef *>(input.data());
+    stream.avail_in = uInt(input.size());
+    stream.next_out = result.data();
+    stream.avail_out = uInt(result.size());
+    if (deflate(&stream, Z_FINISH) != Z_STREAM_END) throw std::runtime_error("fixture block deflate failed");
+    result.resize(stream.total_out);
+    return result;
+}
+struct BlockSelf { std::vector<uint8_t> bytes; size_t extents; };
+BlockSelf block_self(Bytes shader, bool digests) {
+    // Three independently framed blocks: raw 4096, zlib 4096, raw partial 257.
+    // The middle block contains an unaligned AMDGPU ELF; the file's outer ELF
+    // is only the SELF program-header mapping and is never executed.
+    std::vector<uint8_t> clear(2 * 4096 + 257);
+    for (size_t i = 0; i < 4096; ++i) clear[i] = uint8_t(i * 17 + 3);
+    std::copy(shader.begin(), shader.end(), clear.begin() + 4096 + 17);
+    for (size_t i = 8192; i < clear.size(); ++i) clear[i] = uint8_t(i);
+    const size_t table_source = 768, data_source = 1024;
+    std::vector<uint8_t> bytes(data_source);
+    put(bytes, 0, 0xeef51454, 4);
+    put(bytes, 24, 2, 2);
+    put(bytes, 32, (uint64_t(1) << 20) | 0x20000 | (digests ? 0x10000 : 0), 8);
+    put(bytes, 40, table_source, 8);
+    put(bytes, 48, digests ? 120 : 24, 8);
+    put(bytes, 56, digests ? 120 : 24, 8);
+    put(bytes, 64, 0xc08, 8);
+    put(bytes, 72, data_source, 8);
+    put(bytes, 88, clear.size(), 8);
+    put(bytes, 96, 0x464c457f, 4);
+    bytes[100] = 2;
+    bytes[101] = 1;
+    put(bytes, 128, 64, 8);
+    put(bytes, 150, 56, 2);
+    put(bytes, 152, 1, 2);
+    put(bytes, 160, 1, 4);
+    put(bytes, 176, 0x80000000, 8);
+    put(bytes, 192, clear.size(), 8);
+    const size_t extents = table_source + (digests ? 96 : 0);
+    for (size_t block = 0; block < 3; ++block) {
+        auto input = Bytes(clear).subspan(block * 4096, std::min(size_t(4096), clear.size() - block * 4096));
+        auto payload = block == 1 ? deflated(input, 12) : std::vector<uint8_t>(input.begin(), input.end());
+        auto aligned = (payload.size() + 15) & ~size_t(15);
+        put(bytes, extents + block * 8, bytes.size() - data_source, 4);
+        put(bytes, extents + block * 8 + 4, aligned + aligned - payload.size(), 4);
+        if (digests) {
+            auto hash = sha256(payload);
+            for (size_t i = 0; i < 32; ++i)
+                bytes[table_source + block * 32 + i] = uint8_t(std::stoul(hash.substr(i * 2, 2), nullptr, 16));
+        }
+        bytes.insert(bytes.end(), payload.begin(), payload.end());
+        bytes.resize(bytes.size() + aligned - payload.size(), 0);
+    }
+    put(bytes, 80, bytes.size() - data_source, 8);
+    return {std::move(bytes), extents};
+}
 Zip zip(Bytes input, bool compressed, bool descriptor = false, bool signature = true,
         const std::string &name = "shaders/member.bin") {
     std::vector<uint8_t> payload(input.begin(), input.end());
@@ -133,5 +194,45 @@ unsigned archive_tests(Bytes shader) {
     for (unsigned i = 0; i < 4; ++i) nested = zip(nested.bytes, true);
     check(extract_containers(nested.bytes).limited, "archive nesting shares the depth budget");
     check(extract_containers(inner.bytes, 0).limited, "archive candidate budget enforced");
+    for (bool digests : {false, true}) {
+        auto self = block_self(shader, digests);
+        result = extract_containers(self.bytes);
+        check(result.candidates.size() == 1 && result.candidates[0].method == "self/amdgpu_elf",
+              "compressed SELF extent table reconstructs mixed stored/zlib blocks");
+        auto maps = result.candidates[0].evidence.back()["self_segment_map"];
+        check(maps[0]["blocks"].size() == 3 && maps[0]["blocks"][0]["encoding"] == "stored" &&
+                  maps[0]["blocks"][1]["encoding"] == "zlib" &&
+                  maps[0]["blocks"][2]["expanded_bytes"] == 257,
+              "SELF provenance retains partial blocks and encoding");
+        check(maps[0]["blocks"][1]["digest_checked"] == digests,
+              "SELF digest checks accurately disclosed");
+        auto compressed_archive = zip(self.bytes, true);
+        auto nested_self = extract_containers(compressed_archive.bytes);
+        check(nested_self.candidates.size() == 1 && nested_self.candidates[0].method == "zip/self/amdgpu_elf",
+              "compressed SELF blocks work inside archive members");
+    }
+    auto self = block_self(shader, true);
+    self.bytes[768] ^= 1;
+    check(extract_containers(self.bytes).candidates.empty(), "SELF block digest mismatch rejects candidates");
+    self = block_self(shader, false);
+    put(self.bytes, self.extents + 8, 0, 4);
+    check(extract_containers(self.bytes).candidates.empty(), "overlapping SELF block extents rejected");
+    self = block_self(shader, false);
+    put(self.bytes, self.extents + 4, 15, 4);
+    check(extract_containers(self.bytes).candidates.empty(), "SELF extent padding underflow rejected");
+    self = block_self(shader, false);
+    put(self.bytes, 64, 0xc0a, 8);
+    result = extract_containers(self.bytes);
+    check(result.candidates.empty() && finding(result, "encrypted_self_segment"),
+          "encrypted SELF has no raw scan fallback");
+    self = block_self(shader, false);
+    put(self.bytes, 32, (uint64_t(1) << 20) | 0x20002, 8);
+    check(extract_containers(self.bytes).candidates.empty(), "encrypted SELF metadata cannot be decoded");
+    self = block_self(shader, false);
+    put(self.bytes, 64, 0x808, 8);
+    check(finding(extract_containers(self.bytes), "rejected_self"), "unknown SELF window encoding rejected");
+    self = block_self(shader, false);
+    self.bytes.resize(1100);
+    check(extract_containers(self.bytes).candidates.empty(), "truncated SELF block payload rejected");
     return checks;
 }

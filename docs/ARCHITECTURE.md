@@ -13,10 +13,14 @@ read-only game tree
 
 `core.cpp` owns checked byte reads, file mapping, SHA-256, XXH3, path conversion and atomic reports.
 `scan.cpp` owns ELF/AGC detection, candidate validation, provenance and dataset freshness.
-`containers.cpp` handles clear SELF normalization, ZIP32 stored/Deflate archives, and
+`containers.cpp` handles clear SELF normalization and linked compressed blocks, ZIP32 stored/Deflate archives, and
 optional Zstandard frames. Nested adapters share expansion, member-count and depth budgets.
 ZIP members are traversed from validated central-directory metadata; CRC failures and
 encrypted members cannot fall back to raw scanning. Archive member names remain labels.
+SELF block tables are resolved by entry identity, independently of the ELF program-header
+index. Extents and optional SHA-256 digests are checked before using decoded blocks.
+Rejected/encrypted SELF data also has no raw fallback. The adapter does not authenticate
+signed executables or decrypt them.
 `process.cpp` owns OS process/handle lifetime; it never invokes a shell.
 `run.cpp` owns worker scheduling, per-case identity, checkpoints, results and comparisons.
 `analysis.cpp` implements local research/triage operations.
