@@ -520,13 +520,12 @@ VulkanReplayResult vulkan_replay(const ExecutionInputs &inputs, Bytes spirv, con
     submit.pCommandBuffers = &command;
     checked(vk.QueueSubmit(queue, 1, &submit, vk.fence), "vkQueueSubmit");
     const auto waited = vk.WaitForFences(vk.device, 1, &vk.fence, VK_TRUE, 10000000000ull);
-    if (waited == VK_TIMEOUT) {
-        std::cerr << "Vulkan fence timed out; terminating isolated worker without destroying "
-                     "pending resources\n"
+    if (waited != VK_SUCCESS) {
+        std::cerr << "Vulkan fence wait failed (" << waited
+                  << "); terminating isolated worker without destroying pending resources\n"
                   << std::flush;
         std::_Exit(4); // Parent records backend_error; process death is not a GPU reset guarantee.
     }
-    checked(waited, "vkWaitForFences");
     VulkanReplayResult result;
     for (const auto &[name, slot] : allocations) {
         const auto &b = vk.buffers[slot];

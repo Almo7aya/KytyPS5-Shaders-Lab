@@ -58,7 +58,7 @@ shader data races or provide a general driver-conformance verifier. Some Vulkan 
 remain unknown to the requirement checker and are refused even if a driver could support them.
 
 Only system loader/device initialization occurs after the explicit gate. Vulkan call failures
-are backend errors, not shader mismatches. Fence waiting is bounded to ten seconds; a timeout
+are backend errors, not shader mismatches. Fence waiting is bounded to ten seconds; a timeout or error
 terminates the worker without destroying pending resources. The outer process deadline still
 applies to compilation, pipeline creation and execution. **Process termination is not a GPU reset
 or security sandbox.** Drivers can hang outside process control. Use disposable environments for
