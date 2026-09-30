@@ -26,6 +26,7 @@ unsigned host_real_tests(const fs::path &root, Bytes header, const fs::path &wor
 unsigned layout_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned vulkan_guard_tests(const fs::path &root, const fs::path &worker);
 unsigned vulkan_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned replay_plan_tests();
 unsigned pixel_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
@@ -107,6 +108,7 @@ int main(int argc, char **argv) {
         unsigned checks = 0;
         checks += pixel_tests(header());
         checks += host_tests();
+        checks += replay_plan_tests();
         auto test = [&](bool ok, const char *name) {
             check(ok, name);
             ++checks;

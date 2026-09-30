@@ -1,5 +1,6 @@
 #include "shader_lab/vulkan_replay.hpp"
 #include "shader_lab/host_profile.hpp"
+#include "shader_lab/replay_plan.hpp"
 #define VK_NO_PROTOTYPES
 #include <algorithm>
 #include <array>
@@ -211,42 +212,15 @@ VulkanReplayResult vulkan_replay(const ExecutionInputs &inputs, Bytes spirv, con
     bool subgroup_dependent = false;
     for (const auto &cap : inventory.at("capabilities"))
         subgroup_dependent |= cap.get<uint32_t>() >= 61 && cap.get<uint32_t>() <= 68;
-    std::map<uint32_t, std::string> resource_names;
     for (const auto &binding : layout.at("descriptors")) {
         const auto kind = binding.at("kind").get<uint32_t>();
         require(binding.at("set") == 0 && binding.at("binding") == kind &&
                     binding.at("descriptor_type") == "storage_buffer" &&
                     (kind == 0 || kind == 48 || kind == 49),
                 "unsupported compute descriptor kind");
-        if (kind != 0)
-            continue;
-        for (const auto &index : binding.at("resource_indices")) {
-            const auto resource = index.get<uint32_t>();
-            const auto &buffer = layout.at("buffers").at(resource);
-            require(buffer.at("image_alias").is_null(),
-                    "image-buffer aliases require image replay");
-            const auto address =
-                std::stoull(buffer.at("guest_address").get<std::string>(), nullptr, 16);
-            const auto size = buffer.at("descriptor_size_bytes").get<uint64_t>();
-            bool found = false;
-            for (auto it = inputs.resources.begin(); it != inputs.resources.end(); ++it) {
-                if (std::stoull(it.value().at("guest_address").get<std::string>(), nullptr, 16) !=
-                    address)
-                    continue;
-                require(it.value().at("kind") == "buffer" && size &&
-                            size <= inputs.resource_bytes.at(it.key()).size(),
-                        "live descriptor range is not backed by a complete fixture buffer");
-                require(
-                    (!buffer.at("written").get<bool>() || it.value().at("access") != "read_only") &&
-                        (!buffer.at("read").get<bool>() || it.value().at("access") != "write_only"),
-                    "compiler access disagrees with fixture permissions");
-                resource_names[resource] = it.key();
-                found = true;
-                break;
-            }
-            require(found, "live buffer descriptor lacks an exact-base fixture resource");
-        }
     }
+    // Reject incomplete captures before opening the loader; actual alignment is queried below.
+    plan_replay_buffers(inputs, layout, 1, 64 * 1024 * 1024);
     for (const auto &resource : inputs.resources)
         require(resource.at("kind") == "buffer", "image fixtures require image replay");
     Vulkan vk;
@@ -306,6 +280,8 @@ VulkanReplayResult vulkan_replay(const ExecutionInputs &inputs, Bytes spirv, con
     require(physical != VK_NULL_HANDLE,
             "no Vulkan 1.3 compute device supports the compiler's subgroup size");
     const auto &limits = properties.properties.limits;
+    const auto buffer_plan = plan_replay_buffers(inputs, layout, limits.minStorageBufferOffsetAlignment,
+                                                 limits.maxStorageBufferRange);
     const auto dispatch = execution.at("dispatch_size").get<std::array<uint32_t, 3>>();
     for (size_t i = 0; i < 3; ++i)
         require(dispatch[i] <= limits.maxComputeWorkGroupCount[i],
@@ -383,12 +359,9 @@ VulkanReplayResult vulkan_replay(const ExecutionInputs &inputs, Bytes spirv, con
                 "fixture buffer exceeds storage range limit");
         allocations[name] = vk.buffer(physical, bytes);
     }
-    std::vector<uint32_t> shader_data;
-    for (const auto &word : layout.at("shader_data").at("words"))
-        shader_data.push_back(word.is_null() ? 0 : word.get<uint32_t>());
+    const auto &shader_data = buffer_plan.shader_data;
     const auto shader_data_bytes = encode(shader_data);
-    // Each guest base owns a separately allocated VkBuffer bound at offset zero; packed offsets are
-    // zero.
+    // One host allocation per capture preserves aliases between its descriptor subranges.
     std::vector<VkDescriptorSetLayoutBinding> bindings;
     std::vector<std::vector<VkDescriptorBufferInfo>> buffer_infos;
     uint32_t total_descriptors = 0;
@@ -400,14 +373,9 @@ VulkanReplayResult vulkan_replay(const ExecutionInputs &inputs, Bytes spirv, con
         buffer_infos.emplace_back();
         auto &infos = buffer_infos.back();
         if (kind == 0) {
-            for (const auto &index : binding.at("resource_indices")) {
-                const auto resource = index.get<uint32_t>();
-                const auto &b = vk.buffers.at(allocations.at(resource_names.at(resource)));
-                infos.push_back({b.buffer, 0,
-                                 layout.at("buffers")
-                                     .at(resource)
-                                     .at("descriptor_size_bytes")
-                                     .get<uint64_t>()});
+            for (const auto &entry : buffer_plan.bindings) {
+                const auto &b = vk.buffers.at(allocations.at(entry.fixture_resource));
+                infos.push_back({b.buffer, entry.descriptor_offset, entry.descriptor_range});
             }
         } else {
             const auto bytes = kind == 48
@@ -557,9 +525,11 @@ VulkanReplayResult vulkan_replay(const ExecutionInputs &inputs, Bytes spirv, con
                     {"resource_mapping", json::array()},
                     {"execution", "Vulkan_compute_dispatch_and_fence_readback"},
                     {"semantic_correctness", "requires_independent_output_comparison"}};
-    for (const auto &[index, name] : resource_names)
+    for (const auto &entry : buffer_plan.bindings)
         result.trace["resource_mapping"].push_back(
-            {{"compiler_resource", index}, {"fixture_resource", name}, {"host_offset", 0}});
+            {{"compiler_resource", entry.resource}, {"array_element", entry.array_element},
+             {"fixture_resource", entry.fixture_resource}, {"host_offset", entry.descriptor_offset},
+             {"host_range", entry.descriptor_range}, {"packed_byte_adjustment", entry.byte_adjustment}});
     return result;
 }
 } // namespace sl

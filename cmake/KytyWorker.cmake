@@ -142,4 +142,8 @@ file(SHA256 "${sl_register_overlay}" sl_register_overlay_hash)
 string(APPEND sl_compiler_manifest "compute_decoder_source=src/graphics/guest_gpu/command_processor/pm4Handlers.cpp\ncompute_decoder_source_sha256=${sl_register_original_hash}\ncompute_decoder_overlay=shader-lab-generated/ComputeRegister.cpp\ncompute_decoder_overlay_sha256=${sl_register_overlay_hash}\n")
 string(APPEND sl_compiler_manifest "pass_catalog=1\npass_overlay=shader-lab-generated/ShaderRecompiler.cpp\noriginal_pipeline_sha256=${sl_pipeline_original_hash}\noverlay_pipeline_sha256=${sl_pipeline_overlay_hash}\n")
 file(WRITE "${CMAKE_BINARY_DIR}/shader-compiler-sources.txt" "${sl_compiler_manifest}")
-add_custom_target(shader-kyty-worker DEPENDS shader_cfg_tests)
+# Without an executable suffix this phony target collides with the actual output
+# filename under Ninja. The portable CMake target remains shader_cfg_tests.
+if(WIN32)
+  add_custom_target(shader-kyty-worker DEPENDS shader_cfg_tests)
+endif()

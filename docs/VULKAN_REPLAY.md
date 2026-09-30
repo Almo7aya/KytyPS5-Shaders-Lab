@@ -9,6 +9,8 @@ It does not substitute a hand-written SPIR-V kernel or inspect expected outputs.
 Build with `SHADER_LAB_BUILD_KYTY_WORKER=ON` and include the `shader-vulkan-replay` target.
 The backend uses cached upstream Vulkan headers and dynamically loads the system Vulkan loader;
 it never downloads drivers. Keep the compiler runtime DLL beside the executable on Windows.
+On Linux, the compiler-worker CMake target is `shader_cfg_tests` and its executable is
+`shader-kyty-worker`; the Windows-only convenience target avoids a suffix-free Ninja name collision.
 
 ```powershell
 .\build-kyty\shader-lab.exe execute-fixture --fixture fixtures/store/fixture.json --reference fixtures/store/reference.json --worker .\build-kyty\shader-vulkan-replay.exe --output runs/store-vulkan --backend-kind gpu --allow-gpu --timeout-ms 60000
@@ -27,9 +29,12 @@ Even a software Vulkan device uses the GPU protocol category and requires that o
 4. Query a Vulkan 1.3 compute device, its features, float controls, subgroup support and relevant limits.
 5. Allocate coherent host-visible buffers initialized from every fixture resource. Resolve actual
    compiler resources by guest address, not the fixture's arbitrary set/binding IDs. Preserve aliases
-   referring to the same exact fixture base and the compiler's ordered descriptor array.
+   referring to ranges within the same captured buffer and the compiler's ordered descriptor array.
 6. Bind the compiled module's storage buffers and internal flattened-table/shader-data buffers.
-   Each guest base has a separate host allocation at offset zero, so packed runtime offsets are zero.
+   Each captured buffer has one host allocation. Interior descriptor offsets are aligned down to
+   the queried storage-buffer alignment; the remaining byte adjustment is packed into Kyty's
+   shader-data slot. The descriptor range includes that prefix. Adjustments above 255 or ranges
+   exceeding the capture/device limit are refused. This preserves aliasing without copying slices.
    Populate live user-data words and the actual push-constant offset when used.
 7. Submit the requested workgroup counts, synchronize shader writes to host reads and wait for a fence.
    Read back all writable resource bytes, including unwritten sentinels, without modifying input snapshots.
@@ -50,7 +55,7 @@ matched this supplied reference. Neither replay nor structural validity proves g
 Device names and reference provenance are not cryptographic authentication.
 
 Current restrictions are explicit: compute `context_snapshot` profiles, full initial EXEC,
-no LDS/scratch allocation, buffer resources at exact captured bases, and descriptor ranges fully
+no LDS/scratch allocation, buffer resources wholly contained in individual captures, and descriptor ranges fully
 backed by snapshots. Images/samplers, image aliases, GDS, BDA page tables/fault recovery, graphics,
 partial EXEC and captured-compute dispatch mode require additional implementation. The backend
 does not reconstruct missing memory, infer game state, authenticate hardware captures, prevent
@@ -70,6 +75,6 @@ The ordinary test suite runs only no-device opt-in guards for this backend. Expl
 `shader-lab-tests --vulkan-worker ABSOLUTE_WORKER_PATH` executes real Vulkan fixtures; do not run
 that mode without intending device work. CI runs it on a hosted Mesa software device with Vulkan
 validation enabled, separately from Windows compilation/packaging. The test covers wave32/wave64
-indexed stores, unchanged trailing bytes, an intentionally wrong reference and refusal of partial
+indexed stores, interior buffer descriptors, unchanged surrounding bytes, an intentionally wrong reference and refusal of partial
 EXEC. Successful software execution is not physical-GPU or PS5 hardware validation. CI results,
 not the existence of these tests, determine whether a revision has passed.

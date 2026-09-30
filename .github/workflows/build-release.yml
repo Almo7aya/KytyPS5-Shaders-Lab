@@ -217,7 +217,7 @@ jobs:
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= \
             -DKYTY_ROOT="$GITHUB_WORKSPACE/_Build/KytyPS5" -DSHADER_LAB_BUILD_KYTY_WORKER=ON
-          cmake --build build-vulkan --target shader-lab-tests shader-vulkan-replay shader-kyty-worker --parallel 2
+          cmake --build build-vulkan --target shader-lab-tests shader-vulkan-replay shader_cfg_tests --parallel 2
       - name: Execute real Vulkan golden fixtures on the hosted software device
         run: |
           set -euo pipefail
