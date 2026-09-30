@@ -55,6 +55,11 @@ semantic equivalence.
 | `ffmpeg-source-windows-x64.tar.gz` | Upstream's corresponding patched FFmpeg sources, build configuration and recipes, verified against upstream's checksums |
 | `SHA256SUMS` | SHA-256 checksums for all three archives |
 
+The binary ZIP also includes `shader-compiler-sources.txt`, the exact source list selected for
+the compiler-only library. `BUILD-INFO.json` records its interface version and link mode. The
+corresponding-source bundle still preserves the full upstream checkout and dependency sources;
+the smaller link boundary does not yet bypass upstream's configure-time dependency downloads.
+
 Extract the binary ZIP and keep its files together. A current Microsoft Visual
 C++ x64 runtime may be required. No Qt launcher, Vulkan device, game files or
 network connection is required to use the packaged application. Building and

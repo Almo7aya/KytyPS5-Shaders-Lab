@@ -38,6 +38,8 @@ packaged binaries, checksums and corresponding sources.
   per-case logs, phase checkpoints, crash isolation and resumable results.
 - Real Kyty decoding, native CFGs, translation/IR, resource materialization, SPIR-V generation
   and SPIRV-Tools validation for Vulkan 1.3. No second imitation compiler.
+- A compiler-only static-library source boundary and versioned worker entry point, with an
+  auditable source list. Upstream configure-time dependency setup is still inherited.
 - Header-derived compute probes, explicitly approximate pixel probes, explicit simple vertex
   profiles, optional supplied user-data and bounded memory snapshots.
 - Guest disassembly, instruction inventory, opcode histogram, CFG text/JSON/DOT, intermediate/final IR,
@@ -459,6 +461,8 @@ Use result JSON rather than a successful process exit as your regression gate.
 
 Work is tracked against all five items below. Multi-context campaign orchestration
 is implemented, together with portable repro export/replay and failure-preserving reduction.
+The worker now has a smaller compiler-library source/link boundary; standalone upstream
+configuration and pass-level bisection are still open.
 ZIP32 and compressed clear SELF
 adapters, nested payload budgets and reference-output comparison are added
 components of milestones 2 and 3; neither milestone is complete. The remaining

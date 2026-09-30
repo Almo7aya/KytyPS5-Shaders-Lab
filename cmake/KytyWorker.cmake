@@ -3,8 +3,9 @@ if(NOT EXISTS "${KYTY_ROOT}/src/graphics/shader/recompiler/ShaderRecompiler.h")
 endif()
 set(KYTY_BUILD_LAUNCHER OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-# Reuse the upstream standalone-test target's full link closure in this isolated
-# build, replacing only its entry-point source. Never edit the selected checkout.
+# Configure upstream for its dependency targets and ABI settings. The resulting
+# worker links a compiler-only source set, not the full emulator test closure.
+# The selected checkout is never modified.
 add_subdirectory("${KYTY_ROOT}" "${CMAKE_BINARY_DIR}/kyty" EXCLUDE_FROM_ALL)
 if(TARGET libzstd_static)
   target_link_libraries(shader_lab_core PRIVATE libzstd_static)
@@ -15,11 +16,81 @@ endif()
 if(NOT TARGET shader_cfg_tests)
   message(FATAL_ERROR "Unsupported KytyPS5 build interface: shader_cfg_tests target absent")
 endif()
-get_target_property(sl_worker_sources shader_cfg_tests SOURCES)
-list(FILTER sl_worker_sources EXCLUDE REGEX "[/\\]shaderCfgTests\\.cpp$")
-set_property(TARGET shader_cfg_tests PROPERTY SOURCES "${sl_worker_sources};${CMAKE_CURRENT_LIST_DIR}/../src/kyty_worker.cpp")
+file(GLOB_RECURSE sl_compiler_sources CONFIGURE_DEPENDS
+  "${KYTY_ROOT}/src/graphics/shader/recompiler/*.cpp")
+if(NOT sl_compiler_sources)
+  message(FATAL_ERROR "No upstream compiler sources found")
+endif()
+foreach(sl_support IN ITEMS
+    graphics/guest_gpu/gpu_format.cpp
+    graphics/shader/shaderBindings.cpp
+    graphics/shader/shaderPixelParameter.cpp
+    graphics/shader/shaderVertexMetadata.cpp)
+  if(NOT EXISTS "${KYTY_ROOT}/src/${sl_support}")
+    message(FATAL_ERROR "Unsupported compiler source boundary: ${sl_support} is absent")
+  endif()
+  list(APPEND sl_compiler_sources "${KYTY_ROOT}/src/${sl_support}")
+endforeach()
+list(SORT sl_compiler_sources)
+list(LENGTH sl_compiler_sources sl_compiler_source_count)
+get_target_property(sl_full_test_sources shader_cfg_tests SOURCES)
+list(FILTER sl_full_test_sources INCLUDE REGEX "\\.cpp$")
+list(LENGTH sl_full_test_sources sl_full_test_source_count)
+if(sl_compiler_source_count GREATER_EQUAL sl_full_test_source_count)
+  message(FATAL_ERROR "Compiler source boundary did not reduce the upstream full-test source set")
+endif()
+
+# Preserve upstream directory-scoped flags explicitly on this target, including
+# platform/runtime ABI choices. Do not change the independent scanner's directory.
+function(sl_add_compiler_library)
+  add_library(shader_lab_kyty_compiler STATIC ${sl_compiler_sources}
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/kyty_compiler.cpp")
+  get_directory_property(sl_value DIRECTORY "${KYTY_ROOT}" DEFINITION CMAKE_CXX_FLAGS)
+  separate_arguments(sl_flags NATIVE_COMMAND "${sl_value}")
+  target_compile_options(shader_lab_kyty_compiler PRIVATE ${sl_flags})
+  foreach(sl_config IN ITEMS Debug Release RelWithDebInfo MinSizeRel)
+    string(TOUPPER "${sl_config}" sl_upper_config)
+    get_directory_property(sl_value DIRECTORY "${KYTY_ROOT}" DEFINITION "CMAKE_CXX_FLAGS_${sl_upper_config}")
+    separate_arguments(sl_flags NATIVE_COMMAND "${sl_value}")
+    target_compile_options(shader_lab_kyty_compiler PRIVATE "$<$<CONFIG:${sl_config}>:${sl_flags}>")
+  endforeach()
+  get_directory_property(sl_value DIRECTORY "${KYTY_ROOT}" DEFINITION CMAKE_MSVC_RUNTIME_LIBRARY)
+  if(sl_value)
+    set_property(TARGET shader_lab_kyty_compiler PROPERTY MSVC_RUNTIME_LIBRARY "${sl_value}")
+  endif()
+  foreach(sl_property IN ITEMS INCLUDE_DIRECTORIES COMPILE_OPTIONS COMPILE_DEFINITIONS)
+    get_target_property(sl_value shader_cfg_tests ${sl_property})
+    if(sl_value AND NOT sl_value MATCHES "-NOTFOUND$")
+      set_property(TARGET shader_lab_kyty_compiler APPEND PROPERTY ${sl_property} "${sl_value}")
+    endif()
+  endforeach()
+  target_link_libraries(shader_lab_kyty_compiler PUBLIC shader_lab_core PRIVATE
+    common Vulkan::Headers spirv-tools-opt spirv-tools fmt::fmt
+    nlohmann_json::nlohmann_json kyty_git_version)
+  if(TARGET winpthread)
+    target_link_libraries(shader_lab_kyty_compiler PRIVATE winpthread)
+  endif()
+  if(MSVC)
+    target_compile_options(shader_lab_kyty_compiler PRIVATE /EHsc -Wno-pragma-pack -Wno-deprecated-declarations)
+    target_compile_definitions(shader_lab_kyty_compiler PRIVATE _TIMESPEC_DEFINED)
+  else()
+    target_compile_options(shader_lab_kyty_compiler PRIVATE -fexceptions)
+    target_link_libraries(shader_lab_kyty_compiler PRIVATE ${CMAKE_DL_LIBS})
+  endif()
+  set_target_properties(shader_lab_kyty_compiler PROPERTIES
+    CXX_INCLUDE_WHAT_YOU_USE "" CXX_CLANG_TIDY "")
+endfunction()
+sl_add_compiler_library()
+
+# Keep the upstream executable's platform flags/post-build runtime copy, but
+# replace BOTH its sources and its link closure. No emulator object is retained.
+set_property(TARGET shader_cfg_tests PROPERTY SOURCES "${CMAKE_CURRENT_LIST_DIR}/../src/kyty_worker.cpp")
+set_property(TARGET shader_cfg_tests PROPERTY LINK_LIBRARIES shader_lab_kyty_compiler)
+set_property(TARGET shader_cfg_tests PROPERTY INTERFACE_LINK_LIBRARIES "")
+if(MSVC)
+  target_link_libraries(shader_cfg_tests onecore)
+endif()
 set_target_properties(shader_cfg_tests PROPERTIES OUTPUT_NAME shader-kyty-worker RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}" CXX_INCLUDE_WHAT_YOU_USE "" CXX_CLANG_TIDY "")
-target_link_libraries(shader_cfg_tests shader_lab_core)
 if(MSVC)
   target_compile_options(shader_cfg_tests PRIVATE /EHsc)
 else()
@@ -30,5 +101,14 @@ execute_process(COMMAND git -C "${KYTY_ROOT}" status --porcelain OUTPUT_VARIABLE
 if(SL_KYTY_DIRTY)
   string(APPEND SL_KYTY_REV "-dirty")
 endif()
-target_compile_definitions(shader_cfg_tests PRIVATE "SL_KYTY_REV=\"${SL_KYTY_REV}\"")
+target_compile_definitions(shader_lab_kyty_compiler PRIVATE
+  "SL_KYTY_REV=\"${SL_KYTY_REV}\"" "SL_COMPILER_SOURCE_COUNT=${sl_compiler_source_count}"
+  "SL_FULL_TEST_SOURCE_COUNT=${sl_full_test_source_count}")
+# A source manifest makes the compiler-only boundary reviewable in CI artifacts.
+set(sl_compiler_manifest "compiler_interface=1\nkyty_revision=${SL_KYTY_REV}\n")
+foreach(sl_source IN LISTS sl_compiler_sources)
+  file(RELATIVE_PATH sl_relative "${KYTY_ROOT}" "${sl_source}")
+  string(APPEND sl_compiler_manifest "${sl_relative}\n")
+endforeach()
+file(WRITE "${CMAKE_BINARY_DIR}/shader-compiler-sources.txt" "${sl_compiler_manifest}")
 add_custom_target(shader-kyty-worker DEPENDS shader_cfg_tests)

@@ -39,6 +39,7 @@ function Export-Tracked([string]$Repository, [string]$Destination) {
 foreach ($file in @('shader-lab.exe', 'shader-kyty-worker.exe', 'libwinpthread-1.dll')) {
     Copy-Item -LiteralPath (Join-Path $buildRoot $file) -Destination $binary
 }
+Copy-Item -LiteralPath (Join-Path $buildRoot 'shader-compiler-sources.txt') -Destination $binary
 foreach ($file in @('LICENSE', 'README.md', 'THIRD_PARTY.md', 'docs', 'profiles')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $binary -Recurse
 }
@@ -95,6 +96,8 @@ $metadata = [ordered]@{
     compiler = (& clang-cl --version | Select-Object -First 1)
     cmake = (& cmake --version | Select-Object -First 1)
     configuration = 'Release'
+    compiler_interface = 1
+    worker_link_mode = 'compiler_library'
     semantic_correctness = 'not_tested'
 }
 $metadata | ConvertTo-Json -Depth 5 | Set-Content "$binary/BUILD-INFO.json" -Encoding utf8

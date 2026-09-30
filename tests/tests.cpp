@@ -416,6 +416,17 @@ int main(int argc, char **argv) {
         if (argc == 3 && std::string(argv[1]) == "--real-worker") {
             atomic_json(profile, {{"schema", 1}, {"stage", "CS"}, {"mode", "header_probe"}});
             options.worker = fs::absolute(path_from(argv[2]));
+            auto info_process = process(options.worker, {"--compiler-info"}, root,
+                                        root / "compiler-info.json", std::chrono::seconds(10));
+            test(info_process.exit_code == 0 && !info_process.timed_out, "compiler library identity query");
+            auto compiler_info = read_json(root / "compiler-info.json");
+            test(compiler_info.at("compiler_interface") == 1 && compiler_info.at("worker_protocol") == 1 &&
+                 compiler_info.at("link_mode") == "compiler_library" &&
+                 compiler_info.at("upstream_source_count").get<unsigned>() > 4,
+                 "worker exposes the versioned compiler-library boundary");
+            test(compiler_info.at("upstream_source_count").get<unsigned>() <
+                 compiler_info.at("upstream_full_test_source_count").get<unsigned>(),
+                 "compiler-only source set excludes the full emulator test closure");
             options.timeout_ms = 10000;
             options.output = root / "real-run";
             auto real = run(options);

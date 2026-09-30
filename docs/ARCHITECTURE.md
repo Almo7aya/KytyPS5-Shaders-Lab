@@ -34,19 +34,38 @@ accepted/rejected trials. Code reduction requires fresh hash-bound decoder exten
 whole instructions with NOP words without relocating code. This preserves observed failure evidence,
 not program semantics; reductions and incomplete search are recorded explicitly.
 `analysis.cpp` implements local research/triage operations.
-`kyty_worker.cpp` is the only source tied to Kyty's compiler API.
+`kyty_compiler.cpp` is the source adapter tied to Kyty's compiler API.
+`kyty_worker.cpp` is a thin process entry point using the versioned source interface in
+`shader_lab/compiler.hpp`; it does not include upstream headers.
 
 ## Source linkage
 
-The root CMake project adds the selected Kyty checkout as an external source directory into this
-project's isolated build tree. In that build graph only, it substitutes the `shader_cfg_tests`
-entry point with `kyty_worker.cpp` and changes its output name. This reuses upstream compile flags,
-generated headers and link dependencies without maintaining a divergent list of compiler files.
-Upstream CTest registration is disabled; the resulting binary is **not** the upstream test suite.
-The user-facing build target is `shader-kyty-worker`. No source file in Kyty is patched.
+The root CMake project configures the selected Kyty checkout in an isolated build tree for its
+dependency targets and platform settings, without patching it. `shader_lab_kyty_compiler` builds
+the real upstream recompiler source tree plus its format, descriptor and shader-metadata helpers.
+It does not include the game loader, guest libraries, renderer, audio/video code or `shader.cpp`.
+There are no fake runtime stubs. `ShaderInit()` is not called: it only initializes the game-runtime
+shader mapping table, which this explicit-profile compilation path does not use.
 
-This deliberately trades a larger first build for integration reliability. A future upstream
-compiler-library target should replace this adapter. The worker reports the generated upstream
+The existing `shader_cfg_tests` executable target supplies platform entry-point flags and the
+pthread runtime copy, but both its sources and its link closure are replaced by the thin worker
+and compiler library. Upstream CTest registration is disabled; this is **not** the upstream test
+suite. The user-facing target remains `shader-kyty-worker`. Upstream compile/include definitions
+are inherited at the library boundary, and missing required support files fail configuration.
+
+`compiler_info_v1()` reports the interface/protocol versions, configured revision and source counts;
+the CLI exposes it through `--compiler-info`. `execute_compiler_request_v1()` accepts worker-protocol
+1 through a request file. This is a versioned **source** interface, not a cross-toolchain binary ABI.
+Only one request per process is permitted because upstream lifecycle and fatal-error handling are
+process-scoped. Run it on the worker main thread; do not link it into a scanner/UI execution path.
+Shader failures remain response statuses, and fatal assertions remain isolated worker exits.
+
+`shader-compiler-sources.txt` in the build/package lists the exact relative upstream sources selected.
+This reduces compilation and linking, but upstream configuration still visits its dependency setup,
+including unrelated download/configure steps. Removing that configure-time dependency remains work
+for a standalone upstream library build entry point; no download-speed claim is made here.
+
+The worker reports the generated upstream
 revision, configured clean/dirty identity and its executable content hash (in the parent result).
 That executable hash, not a possibly stale human build label, is the compilation cache identity.
 The configured clean/dirty label can become stale until CMake is rerun; preserve the exact source
