@@ -94,8 +94,9 @@ Fixture load_fixture(const fs::path &file) {
     description(f.source.at("id"));
     const auto &shader = f.source.at("shader");
     keys(shader, {"header", "code"});
-    for (const auto *entry : {&shader.at("header"), &shader.at("code"), &f.source.at("profile")})
-        keys(*entry, {"file", "sha256"});
+    keys(shader.at("header"), {"file", "sha256"});
+    keys(shader.at("code"), {"file", "sha256"});
+    keys(f.source.at("profile"), {"file", "sha256"});
     uint64_t budget = payload_limit;
     f.header = verified(root, shader.at("header"), budget);
     f.code = verified(root, shader.at("code"), budget);
