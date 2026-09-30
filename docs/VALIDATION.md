@@ -53,6 +53,13 @@ is added; use the test output from your build as the authoritative result.
   frontend translation. These exercise actual compiler calls, not a mock pass implementation.
 - Deep filesystem paths exceeding the legacy Windows path limit; the hosted Windows runner
   enables the required OS policy and all three executables embed a long-path-aware manifest.
+- Deep-path subprocess creation with absolute request/output paths and recorded actual working
+  directory; Windows must use a short ancestor even when long-path file operations are enabled.
+- Captured compute register ordering, all incomplete PM4 prefixes, missing state, address identity,
+  predication/custom/indexed command rejection, numeric bounds and dispatch-mode validation.
+- Real compute preparation through the selected upstream register decoder and `PrepareProgram`,
+  including user-data overwrites, wave/workgroup/LDS metadata, dispatch-thread dimensions and
+  rejection of conflicting probe overrides.
 - Report data joins, empty/extraction-only datasets and unknown/unmatched outcomes.
 - HTML/script escaping, malformed UTF-8, exact 64-bit origin offsets and safe artifact URLs.
 
@@ -93,6 +100,7 @@ semantics, synchronization or game compatibility. Probe profiles may omit real r
 failures under those assumptions are investigation leads rather than confirmed emulator bugs.
 
 Recorded reference-output comparison is implemented, but reference execution and GPU dispatch
-are not. Repro replay invokes the compiler, not a GPU or the original game. Full PM4/state replay, all graphics
+are not. Repro replay invokes the compiler, not a GPU or the original game. Bounded captured compute
+state replay is supported, but full PM4/state replay, all graphics
 stages, arbitrary archive decoding and semantic equivalence remain outside the current coverage.
 Generated SPIR-V is not a directly importable emulator pipeline cache.

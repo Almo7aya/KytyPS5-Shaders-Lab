@@ -117,6 +117,7 @@ json run(const RunOptions &o) {
                          {"profile_sha256", selected_hash},
                          {"exit_code", p.exit_code},
                          {"elapsed_ms", p.elapsed_ms},
+                         {"worker_working_directory", path_text(p.working_directory)},
                          {"cache_hit", false},
                          {"semantic_correctness", "not_tested"}};
                     if (p.timed_out)

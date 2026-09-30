@@ -3,11 +3,14 @@
 #include "common/logging/log.h"
 #include "common/subsystems.h"
 #include "common/threads.h"
+#include "graphics/guest_gpu/hardwareContext.h"
+#include "graphics/guest_gpu/pm4.h"
 #include "graphics/shader/recompiler/ShaderRecompiler.h"
 #include "graphics/shader/recompiler/frontend/cfg/ShaderCFG.h"
 #include "graphics/shader/recompiler/frontend/decode/ShaderDecoder.h"
 #include "graphics/shader/recompiler/ir/passes/ResourceMaterialization.h"
 #include "graphics/shader/shader.h"
+#include "graphics/shader/shaderCompiler.h"
 #include "kytyGitVersion.h"
 #include "shader_lab/compiler.hpp"
 #include "shader_lab/compiler_trace.hpp"
@@ -20,6 +23,9 @@
 #include <set>
 using namespace Libs::Graphics;
 namespace sr = Libs::Graphics::ShaderRecompiler;
+namespace Libs::Graphics {
+void ShaderLabApplyComputeRegister(HW::CsStageRegisters &, uint32_t, uint32_t);
+}
 namespace {
 struct PassTrace {
     bool enabled = false;
@@ -85,8 +91,9 @@ void sl::compiler_pass(unsigned index, bool completed, const sr::IR::Program *ir
     if (index >= catalog.at("passes").size())
         throw std::runtime_error("unknown compiler pass checkpoint");
     const auto &pass = catalog.at("passes").at(index);
-    trace.record["events"].push_back({{"index", index}, {"name", pass.at("name")},
-                                     {"state", completed ? "completed" : "started"}});
+    trace.record["events"].push_back({{"index", index},
+                                      {"name", pass.at("name")},
+                                      {"state", completed ? "completed" : "started"}});
     trace.record["last"] = trace.record["events"].back();
     atomic_json(trace.output / "pass-trace.json", trace.record);
     trace.active = !completed;
@@ -109,11 +116,16 @@ void sl::compiler_pass(unsigned index, bool completed, const sr::IR::Program *ir
 }
 
 sl::json sl::compiler_info_v1() {
-    return {{"schema", 1}, {"compiler_interface", 1}, {"worker_protocol", 1},
-            {"kyty_revision", KYTY_GIT_REVISION}, {"configured_checkout", SL_KYTY_REV},
-            {"link_mode", "compiler_library"}, {"upstream_source_count", SL_COMPILER_SOURCE_COUNT},
+    return {{"schema", 1},
+            {"compiler_interface", 1},
+            {"worker_protocol", 1},
+            {"kyty_revision", KYTY_GIT_REVISION},
+            {"configured_checkout", SL_KYTY_REV},
+            {"link_mode", "compiler_library"},
+            {"upstream_source_count", SL_COMPILER_SOURCE_COUNT},
             {"upstream_full_test_source_count", SL_FULL_TEST_SOURCE_COUNT},
-            {"execution", "compiler_only"}, {"process_contract", "one_request_per_process"},
+            {"execution", "compiler_only"},
+            {"process_contract", "one_request_per_process"},
             {"pass_catalog", compiler_pass_catalog()}};
 }
 
@@ -160,29 +172,39 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         const auto &profile = request.at("profile");
         only_keys(profile, {"schema", "mode", "host_subgroup_size", "wave_size", "stage",
                             "user_data", "memory", "compute", "pixel", "vertex", "shader_base",
-                            "diagnostics"});
+                            "diagnostics", "capture"});
         if (profile.value("schema", 1) != 1)
             throw std::runtime_error("unsupported profile schema");
         auto mode = profile.value("mode", "header_probe");
-        if (mode != "header_probe" && mode != "context_snapshot")
-            throw std::runtime_error("mode must be header_probe or context_snapshot");
+        if (mode != "header_probe" && mode != "context_snapshot" && mode != "captured_compute")
+            throw std::runtime_error(
+                "mode must be header_probe, context_snapshot or captured_compute");
+        if (mode == "captured_compute")
+            only_keys(profile, {"schema", "mode", "stage", "host_subgroup_size", "shader_base",
+                                "memory", "capture", "diagnostics"});
+        else if (profile.contains("capture"))
+            throw std::runtime_error("capture requires captured_compute mode");
         if (profile.contains("diagnostics")) {
             const auto &diagnostics = profile.at("diagnostics");
             only_keys(diagnostics, {"pass_trace", "stop_after_pass"});
             pass_trace.enabled = diagnostics.value("pass_trace", false);
             if (diagnostics.contains("stop_after_pass")) {
                 const auto &index = diagnostics.at("stop_after_pass");
-                if (!pass_trace.enabled || !index.is_number_integer() ||
-                    index.get<int64_t>() < 0 || index.get<uint64_t>() >= compiler_pass_catalog().at("passes").size())
-                    throw std::runtime_error("stop_after_pass requires pass_trace and an index from the compiler pass catalog");
+                if (!pass_trace.enabled || !index.is_number_integer() || index.get<int64_t>() < 0 ||
+                    index.get<uint64_t>() >= compiler_pass_catalog().at("passes").size())
+                    throw std::runtime_error("stop_after_pass requires pass_trace and an index "
+                                             "from the compiler pass catalog");
                 pass_trace.stop_after = index.get<int>();
             }
             if (pass_trace.enabled) {
                 pass_trace.output = out;
-                pass_trace.record = {{"schema", 1}, {"catalog_schema", 1},
-                    {"id", request.at("id")}, {"code_sha256", sl::sha256(bytes)},
-                    {"configured_checkout", SL_KYTY_REV}, {"events", sl::json::array()},
-                    {"semantic_correctness", "not_tested"}};
+                pass_trace.record = {{"schema", 1},
+                                     {"catalog_schema", 1},
+                                     {"id", request.at("id")},
+                                     {"code_sha256", sl::sha256(bytes)},
+                                     {"configured_checkout", SL_KYTY_REV},
+                                     {"events", sl::json::array()},
+                                     {"semantic_correctness", "not_tested"}};
                 sl::atomic_json(out / "pass-trace.json", pass_trace.record);
             }
         }
@@ -261,6 +283,8 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         auto type = header[0x5a];
         auto stage = profile.value("stage", type == 0 ? "CS" : type == 1 ? "PS" : "unknown");
         result["stage"] = stage;
+        if (mode == "captured_compute" && stage != "CS")
+            throw std::runtime_error("captured_compute requires the compute stage");
         if (stage == "unknown") {
             result["reason"] = "fetch, fused, tessellation and NGG/mesh stages require explicit "
                                "stage/partner state; decoded only";
@@ -297,51 +321,147 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         if (user_data.size() > 40)
             throw std::runtime_error("at most 40 user-data words");
         options.user_data = user_data;
-        if (!profile.contains("user_data"))
+        if (!profile.contains("user_data") && mode != "captured_compute")
             result["assumptions"].push_back(
                 "user-data words are zero; no runtime descriptors captured");
         ShaderComputeInputInfo compute{};
         ShaderPixelInputInfo pixel{};
         ShaderVertexInputInfo vertex{};
+        ShaderParams prepared;
         const auto empty = sl::json::object();
         if (stage == "CS") {
             options.stage = ShaderType::Compute;
-            auto c = profile.value("compute", empty);
-            only_keys(c, {"threads", "lds_size_dwords", "scratch_size_dwords", "group_id",
-                          "thread_ids_num", "workgroup_register", "tg_size_en", "float_mode"});
-            auto threads = c.value(
-                "threads", std::vector<uint32_t>{reg(0x207, 1), reg(0x208, 1), reg(0x209, 1)});
-            if (threads.size() != 3 || !threads[0] || !threads[1] || !threads[2] ||
-                uint64_t(threads[0]) * threads[1] > 1024 ||
-                uint64_t(threads[0]) * threads[1] * threads[2] > 1024)
-                throw std::runtime_error("invalid compute workgroup");
-            for (int i = 0; i < 3; ++i)
-                compute.threads_num[i] = threads[i];
-            auto r = reg(0x213);
-            compute.wave_size = options.wave_size;
-            compute.host_subgroup_size = value(profile, "host_subgroup_size", 32);
-            compute.float_mode = uint8_t(value(c, "float_mode", (reg(0x212, 0xc0000) >> 12) & 255));
-            compute.lds_size_dwords = value(c, "lds_size_dwords", ((r >> 15) & 511) * 128);
-            compute.scratch_size_dwords =
-                value(c, "scratch_size_dwords", uint32_t(sl::integer(header, 0x54, 2)));
-            compute.thread_ids_num = int(value(c, "thread_ids_num", ((r >> 11) & 3) + 1));
-            compute.workgroup_register = int(value(c, "workgroup_register", (r >> 1) & 31));
-            compute.tg_size_en = c.value("tg_size_en", bool(r & (1u << 10)));
-            auto groups =
-                c.value("group_id", std::vector<bool>{bool(r & 128), bool(r & 256), bool(r & 512)});
-            if (groups.size() != 3)
-                throw std::runtime_error("group_id requires three booleans");
-            for (int i = 0; i < 3; ++i)
-                compute.group_id[i] = groups[i];
-            options.input_info.compute = &compute;
-            result["effective_compute"] = {{"threads", threads},
-                                           {"wave_size", options.wave_size},
-                                           {"host_subgroup_size", compute.host_subgroup_size},
-                                           {"lds_size_dwords", compute.lds_size_dwords},
-                                           {"thread_ids_num", compute.thread_ids_num},
-                                           {"workgroup_register", compute.workgroup_register}};
-            result["assumptions"].push_back("header-derived compiler input; no PM4 dispatch "
-                                            "execution or PrepareProgram replay");
+            if (mode == "captured_compute") {
+                set_phase("prepare");
+                const auto &address = profile.at("shader_base");
+                uint64_t guest_base = 0;
+                if (address.is_string()) {
+                    const auto text = address.get<std::string>();
+                    if (text.empty() || text[0] == '-' || text[0] == '+')
+                        throw std::runtime_error("invalid captured shader address");
+                    size_t consumed = 0;
+                    guest_base = std::stoull(text, &consumed, 0);
+                    if (consumed != text.size())
+                        throw std::runtime_error("invalid captured shader address suffix");
+                } else {
+                    if (!address.is_number_unsigned())
+                        throw std::runtime_error("captured shader address must be an unsigned "
+                                                 "integer or address string");
+                    guest_base = address.get<uint64_t>();
+                }
+                auto state = sl::captured_compute_state(header, profile.at("capture"), guest_base);
+                // Assert the independent packet envelope matches this selected upstream's
+                // constants.
+                static_assert(Pm4::IT_SET_SH_REG == 0x76 && Pm4::IT_DISPATCH_DIRECT == 0x15 &&
+                              Pm4::COMPUTE_USER_DATA_0 == 0x240 &&
+                              Pm4::COMPUTE_USER_DATA_15 == 0x24f);
+                HW::ComputeShaderInfo regs{};
+                for (const auto &write : state.at("final_sh_registers")) {
+                    auto offset = write.at("offset").get<uint32_t>();
+                    auto word = write.at("value").get<uint32_t>();
+                    if (offset >= Pm4::COMPUTE_USER_DATA_0 && offset <= Pm4::COMPUTE_USER_DATA_15)
+                        regs.cs_user_sgpr.value[offset - Pm4::COMPUTE_USER_DATA_0] = word;
+                    else
+                        ShaderLabApplyComputeRegister(regs.cs_regs, offset, word);
+                }
+                if (regs.cs_regs.data_addr != guest_base)
+                    throw std::runtime_error(
+                        "upstream decoder disagrees with captured shader address");
+                const auto initiator = state.at("dispatch").at("initiator").get<uint32_t>();
+                regs.cs_regs.wave_size = Pm4::ComputeWaveSize(initiator);
+                // Upstream looks for a legacy hash trailer when this instruction is present.
+                // Bound that read against actual captured code before giving it a host pointer.
+                if (code[0] == 0xbeeb03ff &&
+                    (code.size() < 2 || !sl::contains(bytes, (uint64_t(code[1]) + 1) * 8, 28)))
+                    throw std::runtime_error("captured code lacks the legacy hash trailer required "
+                                             "by upstream preparation");
+                regs.cs_regs.data_addr = reinterpret_cast<uint64_t>(code.data());
+                ShaderMappedData mapped{};
+                mapped.type = static_cast<Prospero::ShaderBinaryType>(header[0x5a]);
+                mapped.code_size_bytes = uint32_t(bytes.size());
+                mapped.scratch_size_dwords = uint32_t(sl::integer(header, 0x54, 2));
+                // Compute preparation reads code extent/scratch metadata, not vertex tables.
+                ShaderInit();
+                ShaderMapUserData(regs.cs_regs.data_addr, mapped);
+                compute.host_subgroup_size = value(profile, "host_subgroup_size", 32);
+                compute.dispatch_thread_dimensions =
+                    (initiator & Pm4::COMPUTE_DISPATCH_INITIATOR_USE_THREAD_DIMENSIONS) != 0;
+                HW::ShaderRegisters shader_registers{};
+                prepared = PrepareProgram(regs, shader_registers, compute);
+                if (compute.dispatch_thread_dimensions)
+                    for (size_t i = 0; i < 3; ++i)
+                        compute.dispatch_threads_num[i] =
+                            state.at("dispatch").at("dimensions").at(i).get<uint32_t>();
+                options.wave_size = compute.wave_size;
+                options.shader_hash = prepared.hash;
+                options.user_data =
+                    std::span<const uint32_t>(prepared.user_data.data(), prepared.user_data_count);
+                options.input_info.compute = &compute;
+                state["preparation"] = "upstream_PrepareProgram";
+                state["id"] = request.at("id");
+                state["code_sha256"] = sl::sha256(bytes);
+                state["header_sha256"] = sl::sha256(header);
+                state["configured_checkout"] = SL_KYTY_REV;
+                state["prepared_shader_hash"] = sl::hex(prepared.hash, 16);
+                state["prepared_user_data"] =
+                    std::vector<uint32_t>(options.user_data.begin(), options.user_data.end());
+                result["effective_compute"] = {
+                    {"threads",
+                     {compute.threads_num[0], compute.threads_num[1], compute.threads_num[2]}},
+                    {"wave_size", compute.wave_size},
+                    {"host_subgroup_size", compute.host_subgroup_size},
+                    {"lds_size_dwords", compute.lds_size_dwords},
+                    {"scratch_size_dwords", compute.scratch_size_dwords},
+                    {"thread_ids_num", compute.thread_ids_num},
+                    {"workgroup_register", compute.workgroup_register},
+                    {"float_mode", compute.float_mode},
+                    {"dispatch_thread_dimensions", compute.dispatch_thread_dimensions},
+                    {"dispatch_threads",
+                     {compute.dispatch_threads_num[0], compute.dispatch_threads_num[1],
+                      compute.dispatch_threads_num[2]}},
+                    {"preparation", "upstream_PrepareProgram"}};
+                result["assumptions"].push_back("Captured state provenance is user-supplied; no "
+                                                "dispatch or guest memory writes executed");
+                sl::atomic_json(out / "captured-state.json", state);
+            } else {
+                auto c = profile.value("compute", empty);
+                only_keys(c, {"threads", "lds_size_dwords", "scratch_size_dwords", "group_id",
+                              "thread_ids_num", "workgroup_register", "tg_size_en", "float_mode"});
+                auto threads = c.value(
+                    "threads", std::vector<uint32_t>{reg(0x207, 1), reg(0x208, 1), reg(0x209, 1)});
+                if (threads.size() != 3 || !threads[0] || !threads[1] || !threads[2] ||
+                    uint64_t(threads[0]) * threads[1] > 1024 ||
+                    uint64_t(threads[0]) * threads[1] * threads[2] > 1024)
+                    throw std::runtime_error("invalid compute workgroup");
+                for (int i = 0; i < 3; ++i)
+                    compute.threads_num[i] = threads[i];
+                auto r = reg(0x213);
+                compute.wave_size = options.wave_size;
+                compute.host_subgroup_size = value(profile, "host_subgroup_size", 32);
+                compute.float_mode =
+                    uint8_t(value(c, "float_mode", (reg(0x212, 0xc0000) >> 12) & 255));
+                compute.lds_size_dwords = value(c, "lds_size_dwords", ((r >> 15) & 511) * 128);
+                compute.scratch_size_dwords =
+                    value(c, "scratch_size_dwords", uint32_t(sl::integer(header, 0x54, 2)));
+                compute.thread_ids_num = int(value(c, "thread_ids_num", ((r >> 11) & 3) + 1));
+                compute.workgroup_register = int(value(c, "workgroup_register", (r >> 1) & 31));
+                compute.tg_size_en = c.value("tg_size_en", bool(r & (1u << 10)));
+                auto groups = c.value(
+                    "group_id", std::vector<bool>{bool(r & 128), bool(r & 256), bool(r & 512)});
+                if (groups.size() != 3)
+                    throw std::runtime_error("group_id requires three booleans");
+                for (int i = 0; i < 3; ++i)
+                    compute.group_id[i] = groups[i];
+                options.input_info.compute = &compute;
+                result["effective_compute"] = {{"threads", threads},
+                                               {"wave_size", options.wave_size},
+                                               {"host_subgroup_size", compute.host_subgroup_size},
+                                               {"lds_size_dwords", compute.lds_size_dwords},
+                                               {"thread_ids_num", compute.thread_ids_num},
+                                               {"workgroup_register", compute.workgroup_register}};
+                result["assumptions"].push_back("header-derived compiler input; no PM4 dispatch "
+                                                "execution or PrepareProgram replay");
+            }
         } else if (stage == "PS") {
             options.stage = ShaderType::Pixel;
             auto p = profile.value("pixel", empty);
@@ -482,7 +602,8 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         result["status"] = "pass_checkpoint_reached";
         result["last_phase"] = phase;
         result["pass_checkpoint"] = compiler_pass_catalog().at("passes").at(stop.index);
-        result["reason"] = "Diagnostic prefix stopped intentionally; no validation or semantic verdict";
+        result["reason"] =
+            "Diagnostic prefix stopped intentionally; no validation or semantic verdict";
         sl::atomic_json(out / "response.json", result);
         return 0;
     } catch (const std::exception &ex) {

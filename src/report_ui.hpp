@@ -196,7 +196,7 @@ function unsupportedHtml(c){
 }
 function overviewHtml(c){
  const d=c.details,r=c.result,info=outcome(c),status=statusOf(c);
- const stages=[['input_validation','Input'],['initialize','Initialize'],['decode','Decode'],['cfg','CFG'],['translate','Translate'],['materialize','Resources'],['emit','SPIR-V'],['validate','Validate']];
+ const stages=[['input_validation','Input'],['initialize','Initialize'],['decode','Decode'],['cfg','CFG'],...(d.context_mode==='captured_compute'||c.profile?.mode==='captured_compute'||c.phase==='prepare'?[['prepare','Prepare state']]:[]),['translate','Translate'],['materialize','Resources'],['emit','SPIR-V'],['validate','Validate']];
  const at=stages.findIndex(p=>p[0]===c.phase);
  const pipeline=stages.map(([id,label],i)=>{
   const finished=i===at&&(status==='spirv_valid_under_profile'||status==='spirv_invalid_under_profile');
@@ -224,6 +224,7 @@ const ARTIFACT_GROUPS=[
  ['Disassembly & control flow',[['guest.asm','Decoded guest instructions'],['instructions.json','Instruction inventory and opcode histogram'],['native-cfg.txt','Native control-flow graph'],['cfg.json','Control-flow blocks and edges'],['cfg.dot','Graphviz control-flow graph'],['cfg.txt','Translated control-flow dump']]],
  ['Translation & resources',[['translated.ir','Intermediate representation after translation'],['final.ir','Final intermediate representation'],['header-registers.json','Header register values'],['memory-reads.json','Resource materialization read trace']]],
  ['Compiler passes',[['pass-trace.json','Ordered upstream pass entry/return checkpoints'],['pass-stop.ir','IR at an intentional prefix stop; not a correctness verdict']]],
+ ['Captured state',[['captured-state.json','Ordered register/PM4 provenance and upstream preparation inputs']]],
  ['SPIR-V output',[['shader.spv','Emitted binary module'],['shader.spvasm','Human-readable SPIR-V assembly']]],
  ['Reproduction & worker evidence',[['request.json','Exact worker request and selected profile'],['response.json','Worker response and diagnostics'],['result.json','Runner outcome and timing'],['phase.json','Last compiler phase checkpoint'],['worker.log','Complete worker log']]]
 ];

@@ -86,7 +86,7 @@ void report(const fs::path &dataset, const fs::path &results, const fs::path &ou
                      {"request.json", "response.json", "result.json", "phase.json", "worker.log",
                       "guest.asm", "instructions.json", "cfg.json", "cfg.dot", "native-cfg.txt",
                       "cfg.txt", "translated.ir", "header-registers.json", "memory-reads.json",
-                      "final.ir", "shader.spv", "shader.spvasm", "pass-trace.json", "pass-stop.ir"}) {
+                      "final.ir", "shader.spv", "shader.spvasm", "pass-trace.json", "pass-stop.ir", "captured-state.json"}) {
                     auto file = dir / name;
                     std::error_code ec;
                     if (fs::is_regular_file(file, ec) &&

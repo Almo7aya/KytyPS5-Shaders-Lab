@@ -15,6 +15,8 @@ bool minimize_fixture_worker(const json &request);
 int pass_fixture_worker(const json &request);
 unsigned pass_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned pass_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned capture_tests(Bytes header);
+unsigned capture_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -81,6 +83,11 @@ int main(int argc, char **argv) {
                 std::this_thread::sleep_for(std::chrono::seconds(10));
             if (mode == "error")
                 return 17;
+            if (mode == "cwd") {
+                atomic_json(out / "response.json", {{"schema", 1}, {"id", q["id"]},
+                            {"status", "fixture_pass"}, {"cwd", path_text(fs::current_path())}});
+                return 0;
+            }
             atomic_json(out / "response.json",
                         {{"schema", 1}, {"id", q["id"]}, {"status", "fixture_pass"}});
             return 0;
@@ -101,6 +108,7 @@ int main(int argc, char **argv) {
                  "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
              "SHA million a");
         auto h = header();
+        checks += capture_tests(h);
         std::string why;
         test(valid_header(h, why), "valid header");
         h[0x5b] = 1;
@@ -268,6 +276,23 @@ int main(int argc, char **argv) {
         auto profile = root / "profile.json";
         atomic_json(profile, {{"test_mode", "ok"}});
         auto exe = fs::absolute(path_from(argv[0]));
+        auto long_workdir = long_file.parent_path();
+        auto long_request = long_workdir / "request.json";
+        atomic_json(long_request, {{"id", "long-path-fixture"}, {"profile", {{"test_mode", "cwd"}}},
+                                  {"output", path_text(long_workdir)}});
+        auto long_process = process(exe, {"--request", path_text(long_request)}, long_workdir,
+                                    long_workdir / "worker.log", std::chrono::seconds(5));
+        test(long_process.exit_code == 0 && !long_process.timed_out,
+             "worker launches with absolute evidence paths deeper than MAX_PATH");
+        test(fs::equivalent(path_from(read_json(long_workdir / "response.json").at("cwd").get<std::string>()),
+                            long_process.working_directory), "actual worker launch directory is disclosed");
+#ifdef _WIN32
+        test(long_process.working_directory.native().size() < 259,
+             "Windows uses a short ancestor without changing absolute request paths");
+#else
+        test(fs::equivalent(long_process.working_directory, long_workdir),
+             "non-Windows workers retain the requested working directory");
+#endif
         checks += repro_tests(root / "repro-fixtures", b, exe);
         checks += minimize_tests(root / "minimize-fixtures", header(), exe);
         checks += pass_tests(root / "pass-fixtures", header(), exe);
@@ -450,6 +475,7 @@ int main(int argc, char **argv) {
                  "real Kyty end-program SPIR-V validation");
             checks += minimize_real_tests(root / "real-minimization", header(), options.worker);
             checks += pass_real_tests(root / "real-passes", header(), options.worker);
+            checks += capture_real_tests(root / "real-capture", header(), options.worker);
         }
         std::cout << "PASS: " << checks << " checks (fixtures; no guest/GPU conformance)\n";
         return 0;

@@ -42,6 +42,8 @@ packaged binaries, checksums and corresponding sources.
   auditable source list. Upstream configure-time dependency setup is still inherited.
 - Header-derived compute probes, explicitly approximate pixel probes, explicit simple vertex
   profiles, optional supplied user-data and bounded memory snapshots.
+- Captured compute SH-register/PM4 replay through the selected upstream register decoder
+  and `PrepareProgram`, with required-state checks and per-write provenance.
 - Guest disassembly, instruction inventory, opcode histogram, CFG text/JSON/DOT, intermediate/final IR,
   memory-read trace, SPIR-V binary/disassembly and validator diagnostics.
 - Searchable offline HTML reports; failure grouping; run-to-run outcome/SPIR-V comparisons;
@@ -62,8 +64,9 @@ patched/runtime-generated code and dynamically loaded shader libraries can leave
 Container warnings and rejected/unpaired candidates remain in the manifest and report. Use authorized,
 already-unpacked data where necessary. No decryption keys, DRM bypass or game redistribution is needed.
 
-The worker currently does **not** reproduce `AgcCreateShader`, complete PM4 state, `PrepareProgram`,
-fetch-table construction, shader fusion or full NGG/mesh/tessellation setup. Such stages are decoded
+The worker currently does **not** reproduce `AgcCreateShader`, complete PM4 state,
+graphics-stage preparation, fetch-table construction, shader fusion or full NGG/mesh/tessellation setup.
+Captured compute supports the bounded preparation path described below. Other stages are decoded
 but normally report `missing_stage_context`. Full stage coverage remains future work. The current
 focus is traceability, corpus identity, clear SELF handling, failure isolation and direct linkage
 to the selected compiler.
@@ -100,6 +103,10 @@ Windows executables opt into long paths. Deep datasets/repro directories also re
 `LongPathsEnabled` system policy; the application never changes this machine-wide setting.
 See [Microsoft's long-path requirements](https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation).
 CI enables the policy only on its disposable Windows runner and exercises long paths.
+Windows still [limits the working directory used to launch a process](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-setcurrentdirectory). Deep case directories
+therefore launch from their nearest short ancestor; absolute request/output paths retain the
+original evidence layout. Results disclose `worker_working_directory`. Third-party workers
+must use the request's absolute paths, not assume their current directory is the case directory.
 
 For a lightweight extraction/reporting-only build:
 
@@ -269,6 +276,45 @@ For different metadata per shader, supply a profile bundle:
 Replace the placeholder key with an actual full case ID. Unknown IDs/fields are rejected.
 Profiles select one context per case per run. The worker's checked-in profile parser is the
 authoritative supported field list.
+
+### Captured compute preparation
+
+`profiles/captured-compute.example.json` is a **fictional** schema example for the
+`captured_compute` profile mode. The `capture` object contains provenance, an explicit
+`use_header_registers` choice, an initial SH-register snapshot and PM4 dwords ending at
+one `DISPATCH_DIRECT`. Register offsets are relative to the SH register space, not byte
+addresses or absolute hardware register indices. Header SH writes apply first when enabled,
+then the initial snapshot, then packet writes in stream order. Header context registers are
+not used by this compute path and that fact is recorded.
+
+The `compute_pm4/1` adapter accepts only ordinary type-3 `SET_SH_REG` and a final
+`DISPATCH_DIRECT`. Predication, indexed writes, indirect buffers/dispatches, memory writes,
+custom NOP commands, synchronization and unknown packets are rejected rather than skipped.
+Captures are limited to 256 initial register entries and 1,048,576 PM4 dwords. This is a
+bounded dispatch-state slice, not a whole submission emulator, game tracer or GPU execution.
+
+Required final state includes `COMPUTE_NUM_THREAD_X/Y/Z`, `COMPUTE_PGM_LO/HI`,
+`COMPUTE_PGM_RSRC1/2/3`, and every user SGPR referenced by the encoded count. Missing
+values are never implicitly zeroed. Supported direct compute user-data slots are 0–15.
+The final program address must equal the explicit, aligned 48-bit `shader_base` alias
+for this case. Group size is bounded to 1,024 invocations. Zero dispatch dimensions,
+disabled dispatches and unknown initiator bits are rejected. Supply a complete snapshot
+at the beginning of the slice; this tool does not reconstruct omitted earlier commands.
+
+The worker applies the selected upstream compute-register decoder, registers the owned
+code extent and scratch metadata in its private upstream shader map, and calls the actual
+compute `PrepareProgram`. Guest wave size comes from the dispatch initiator; user SGPRs,
+group/thread inputs, LDS and floating-point mode come from prepared state. The capture
+profile cannot also specify probe `compute`, `wave_size` or `user_data` overrides.
+`host_subgroup_size` remains an explicit host assumption, not a queried GPU feature set.
+
+`captured-state.json` retains all writes, packet positions, final registers, dispatch and
+prepared user data. Results record effective compiler metadata and the preparation path.
+Provenance is user-supplied, not authenticated. Memory descriptors still require bounded
+`memory` snapshots; no supplied guest address is directly dereferenced. A legacy hash
+trailer requested by upstream preparation must lie inside the owned code bytes or the
+case is rejected. This mode does not implement AGC header relocation or graphics fetch
+tables, and valid SPIR-V still says nothing about output equivalence.
 
 ### Multi-context campaigns
 
@@ -514,7 +560,9 @@ assertion-prefix bisection; standalone upstream configuration and semantic pass 
 are still open.
 ZIP32 and compressed clear SELF
 adapters, nested payload budgets and reference-output comparison are added
-components of milestones 2 and 3; neither milestone is complete. The remaining
+components of milestones 2 and 3; neither milestone is complete. Bounded captured compute
+preparation is implemented as part of milestone 1; graphics/partner and host-feature coverage
+remain open. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
 the development branch pending GitHub validation. Compiler-only results are not
 execution conformance.

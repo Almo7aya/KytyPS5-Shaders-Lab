@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "mode": "captured_compute",
+  "stage": "CS",
+  "host_subgroup_size": 32,
+  "shader_base": "0x1000",
+  "capture": {
+    "schema": 1,
+    "provenance": {
+      "source": "Fictional example, not a real capture",
+      "method": "Replace registers, shader address and PM4 with an authorized compute capture"
+    },
+    "use_header_registers": true,
+    "initial_sh_registers": [
+      {"offset": 519, "value": 4},
+      {"offset": 520, "value": 2},
+      {"offset": 521, "value": 1},
+      {"offset": 524, "value": 16},
+      {"offset": 525, "value": 0},
+      {"offset": 530, "value": 786432},
+      {"offset": 531, "value": 35204},
+      {"offset": 552, "value": 0},
+      {"offset": 576, "value": 11},
+      {"offset": 577, "value": 22}
+    ],
+    "pm4": [3221321218, 577, 33, 3221427458, 2, 3, 4, 32833]
+  }
+}

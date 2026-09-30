@@ -74,6 +74,7 @@ struct ProcessResult {
     uint32_t exit_code = 0;
     bool timed_out = false;
     uint64_t elapsed_ms = 0;
+    fs::path working_directory;
 };
 ProcessResult process(const fs::path &executable, const std::vector<std::string> &args,
                       const fs::path &working_directory, const fs::path &log,
@@ -106,6 +107,8 @@ struct PassBisectOptions {
     unsigned confirmations = 2;
 };
 json bisect_passes(const PassBisectOptions &options);
+// Bounded register/packet replay only. Never executes dispatches or guest memory writes.
+json captured_compute_state(Bytes header, const json &capture, uint64_t shader_address);
 json compare(const fs::path &before, const fs::path &after);
 json correlate(const fs::path &dataset, const fs::path &log);
 json inspect(const fs::path &dataset, std::string hash);

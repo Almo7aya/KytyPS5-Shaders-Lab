@@ -23,6 +23,7 @@ if(NOT sl_compiler_sources)
 endif()
 foreach(sl_support IN ITEMS
     graphics/guest_gpu/gpu_format.cpp
+    graphics/shader/shader.cpp
     graphics/shader/shaderBindings.cpp
     graphics/shader/shaderPixelParameter.cpp
     graphics/shader/shaderVertexMetadata.cpp)
@@ -48,6 +49,11 @@ sl_make_pass_overlay("${sl_pipeline_original}" "${sl_pipeline_overlay}")
 set(sl_compiler_manifest_sources ${sl_compiler_sources})
 list(REMOVE_ITEM sl_compiler_sources "${sl_pipeline_original}")
 list(APPEND sl_compiler_sources "${sl_pipeline_overlay}")
+include("${CMAKE_CURRENT_LIST_DIR}/ComputeRegisterOverlay.cmake")
+set(sl_register_original "${KYTY_ROOT}/src/graphics/guest_gpu/command_processor/pm4Handlers.cpp")
+set(sl_register_overlay "${CMAKE_BINARY_DIR}/shader-lab-generated/ComputeRegister.cpp")
+sl_make_compute_register_decoder("${sl_register_original}" "${sl_register_overlay}")
+list(APPEND sl_compiler_sources "${sl_register_overlay}")
 
 # Preserve upstream directory-scoped flags explicitly on this target, including
 # platform/runtime ABI choices. Do not change the independent scanner's directory.
@@ -122,6 +128,9 @@ foreach(sl_source IN LISTS sl_compiler_manifest_sources)
 endforeach()
 file(SHA256 "${sl_pipeline_original}" sl_pipeline_original_hash)
 file(SHA256 "${sl_pipeline_overlay}" sl_pipeline_overlay_hash)
+file(SHA256 "${sl_register_original}" sl_register_original_hash)
+file(SHA256 "${sl_register_overlay}" sl_register_overlay_hash)
+string(APPEND sl_compiler_manifest "compute_decoder_source=src/graphics/guest_gpu/command_processor/pm4Handlers.cpp\ncompute_decoder_source_sha256=${sl_register_original_hash}\ncompute_decoder_overlay=shader-lab-generated/ComputeRegister.cpp\ncompute_decoder_overlay_sha256=${sl_register_overlay_hash}\n")
 string(APPEND sl_compiler_manifest "pass_catalog=1\npass_overlay=shader-lab-generated/ShaderRecompiler.cpp\noriginal_pipeline_sha256=${sl_pipeline_original_hash}\noverlay_pipeline_sha256=${sl_pipeline_overlay_hash}\n")
 file(WRITE "${CMAKE_BINARY_DIR}/shader-compiler-sources.txt" "${sl_compiler_manifest}")
 add_custom_target(shader-kyty-worker DEPENDS shader_cfg_tests)

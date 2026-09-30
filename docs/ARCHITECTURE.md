@@ -37,6 +37,10 @@ not program semantics; reductions and incomplete search are recorded explicitly.
 catalog. It validates a normal baseline and a traced baseline, probes prefixes in fresh
 processes, then reconfirms adjacent completed/unreachable boundaries. It does not disable
 passes, validate arbitrary intermediate IR, or infer which pass introduced a semantic error.
+`capture.cpp` validates bounded compute snapshots and type-3 PM4 register/dispatch slices.
+It records ordered writes and refuses missing state or packets requiring guest execution.
+The source-linked adapter then uses the selected upstream register decoder and compute
+`PrepareProgram`; the standalone parser itself never imitates shader translation.
 `analysis.cpp` implements local research/triage operations.
 `kyty_compiler.cpp` is the source adapter tied to Kyty's compiler API.
 `kyty_worker.cpp` is a thin process entry point using the versioned source interface in
@@ -46,10 +50,11 @@ passes, validate arbitrary intermediate IR, or infer which pass introduced a sem
 
 The root CMake project configures the selected Kyty checkout in an isolated build tree for its
 dependency targets and platform settings, without patching it. `shader_lab_kyty_compiler` builds
-the real upstream recompiler source tree plus its format, descriptor and shader-metadata helpers.
-It does not include the game loader, guest libraries, renderer, audio/video code or `shader.cpp`.
-There are no fake runtime stubs. `ShaderInit()` is not called: it only initializes the game-runtime
-shader mapping table, which this explicit-profile compilation path does not use.
+the real upstream recompiler source tree plus its format, descriptor, shader-metadata and
+preparation helpers (`shader.cpp`). It does not link the game loader, guest libraries, renderer
+or audio/video runtime. Captured compute mode calls `ShaderInit()` once in the isolated worker
+and maps only the owned shader code and its bounded compute metadata. Probe mode does not
+initialize or use that table. No guest code or GPU work is executed.
 
 The existing `shader_cfg_tests` executable target supplies platform entry-point flags and the
 pthread runtime copy, but both its sources and its link closure are replaced by the thin worker
@@ -77,6 +82,13 @@ pass calls and order. Hooks are inert unless profile diagnostics enable them. Ex
 stops unwind through a dedicated internal exception and return a diagnostic-only status.
 Upstream filenames remain in diagnostics, but inserted hooks shift pipeline line numbers;
 consult the packaged generated copy. Assertions in unmodified pass files retain their locations.
+
+`ComputeRegisterOverlay.cmake` extracts the actual compute-register decoding switch from
+upstream `pm4Handlers.cpp`, changing only its CommandProcessor wrapper into a register-structure
+argument. Its ignored-register helper is copied only while upstream declares it as empty.
+Changed boundaries or newly introduced runtime dependencies fail configuration. Both source
+and generated hashes are retained in the compiler manifest and the generated source is packaged.
+The shader preparation translation unit is compiled unchanged, not reimplemented in the adapter.
 
 The trace records case identity, code hash, configured checkout and ordered entry/return events.
 The bisection runner accepts only the worker's matching catalog and fresh case-contained traces.

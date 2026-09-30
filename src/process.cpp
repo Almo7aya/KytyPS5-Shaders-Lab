@@ -48,6 +48,7 @@ ProcessResult process(const fs::path &executable, const std::vector<std::string>
                       const fs::path &cwd, const fs::path &log, std::chrono::milliseconds timeout) {
     const auto begin = std::chrono::steady_clock::now();
     ProcessResult result;
+    result.working_directory = fs::absolute(cwd).lexically_normal();
     if (timeout.count() <= 0 || timeout.count() > 86400000)
         throw std::runtime_error("timeout must be 1..86400000 ms");
     fs::create_directories(cwd);
@@ -93,9 +94,18 @@ ProcessResult process(const fs::path &executable, const std::vector<std::string>
                                    handles, sizeof(handles), nullptr, nullptr))
         throw std::runtime_error("worker handle isolation failed");
     PROCESS_INFORMATION pi{};
+    // Win32 file APIs can use long paths, but CreateProcessW's working directory
+    // still has a MAX_PATH limit. Requests/artifact paths are absolute; launch
+    // from the nearest existing short ancestor and disclose the actual cwd.
+    while (result.working_directory.native().size() >= MAX_PATH - 1) {
+        auto parent = result.working_directory.parent_path();
+        if (parent == result.working_directory || parent.empty())
+            throw std::runtime_error("cannot find a Windows worker launch directory within MAX_PATH");
+        result.working_directory = std::move(parent);
+    }
     if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
                         CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr,
-                        cwd.c_str(), &si.StartupInfo, &pi))
+                        result.working_directory.c_str(), &si.StartupInfo, &pi))
         throw std::runtime_error("cannot launch worker; Win32=" + std::to_string(GetLastError()));
     Handle proc{pi.hProcess}, thread{pi.hThread};
     if (!AssignProcessToJobObject(job, proc)) {
