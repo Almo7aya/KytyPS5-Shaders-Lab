@@ -98,6 +98,14 @@ function(sl_add_compiler_library)
 endfunction()
 sl_add_compiler_library()
 
+add_executable(shader-vulkan-replay "${CMAKE_CURRENT_LIST_DIR}/../src/vulkan_worker.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../src/vulkan_replay.cpp")
+target_link_libraries(shader-vulkan-replay PRIVATE shader_lab_kyty_compiler Vulkan::Headers ${CMAKE_DL_LIBS})
+if(MSVC)
+  target_compile_options(shader-vulkan-replay PRIVATE /EHsc)
+  target_sources(shader-vulkan-replay PRIVATE "${CMAKE_CURRENT_LIST_DIR}/windows.manifest")
+endif()
+
 # Keep the upstream executable's platform flags/post-build runtime copy, but
 # replace BOTH its sources and its link closure. No emulator object is retained.
 set_property(TARGET shader_cfg_tests PROPERTY SOURCES "${CMAKE_CURRENT_LIST_DIR}/../src/kyty_worker.cpp")

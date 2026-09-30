@@ -147,6 +147,10 @@ unsigned host_tests() {
     test(compiler_host_subgroup(json::object()) == 32, "legacy default subgroup retained");
     host["subgroup_size"] = 64;
     test(compiler_host_subgroup({{"host", host}}) == 64, "declared host drives compiler subgroup");
+    auto small_host = host;
+    small_host["subgroup_size"] = 8;
+    test(normalize_host_profile(small_host).at("subgroup_size") == 8,
+         "queried software device subgroup accepted by assessment schema");
     auto reject = [&](const json &p) {
         bool threw = false;
         try {
@@ -158,6 +162,7 @@ unsigned host_tests() {
     };
     reject({{"host", host}, {"host_subgroup_size", 32}});
     reject({{"host_subgroup_size", true}});
+    reject({{"host", small_host}});
     reject({{"host_subgroup_size", 32.5}});
     reject({{"host_subgroup_size", -32}});
     for (const auto &field : {"subgroup_size", "schema"}) {

@@ -24,6 +24,8 @@ unsigned pixel_tests(Bytes header);
 unsigned host_tests();
 unsigned host_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned layout_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
+unsigned vulkan_guard_tests(const fs::path &root, const fs::path &worker);
+unsigned vulkan_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned pixel_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
@@ -469,6 +471,10 @@ int main(int argc, char **argv) {
         fs::remove(root / "campaign/.campaign-lock");
         if (argc == 3 && std::string(argv[1]) == "--cpu-worker")
             checks += cpu_tests(root / "real-cpu", header(), fs::absolute(path_from(argv[2])));
+        if (argc == 3 && std::string(argv[1]) == "--vulkan-guard-worker")
+            checks += vulkan_guard_tests(root / "vulkan-guard", fs::absolute(path_from(argv[2])));
+        if (argc == 3 && std::string(argv[1]) == "--vulkan-worker")
+            checks += vulkan_real_tests(root / "real-vulkan", header(), fs::absolute(path_from(argv[2])));
         if (argc == 3 && std::string(argv[1]) == "--real-worker") {
             atomic_json(profile, {{"schema", 1}, {"stage", "CS"}, {"mode", "header_probe"}});
             options.worker = fs::absolute(path_from(argv[2]));

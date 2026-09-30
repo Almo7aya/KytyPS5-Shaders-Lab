@@ -36,7 +36,7 @@ function Export-Tracked([string]$Repository, [string]$Destination) {
     Invoke-Checked tar @('-xf', $archive, '-C', $Destination)
 }
 
-foreach ($file in @('shader-lab.exe', 'shader-kyty-worker.exe', 'shader-cpu-reference.exe', 'libwinpthread-1.dll')) {
+foreach ($file in @('shader-lab.exe', 'shader-kyty-worker.exe', 'shader-cpu-reference.exe', 'shader-vulkan-replay.exe', 'libwinpthread-1.dll')) {
     Copy-Item -LiteralPath (Join-Path $buildRoot $file) -Destination $binary
 }
 Copy-Item -LiteralPath (Join-Path $buildRoot 'shader-compiler-sources.txt') -Destination $binary
@@ -46,6 +46,8 @@ foreach ($file in @('LICENSE', 'README.md', 'THIRD_PARTY.md', 'docs', 'profiles'
 }
 Invoke-Checked (Join-Path $binary 'shader-lab.exe') @('--help')
 Invoke-Checked (Join-Path $binary 'shader-cpu-reference.exe') @('--help')
+Invoke-Checked (Join-Path $binary 'shader-vulkan-replay.exe') @('--help')
+Invoke-Checked (Join-Path $buildRoot 'shader-lab-tests.exe') @('--vulkan-guard-worker', (Join-Path $binary 'shader-vulkan-replay.exe'))
 Invoke-Checked (Join-Path $buildRoot 'shader-lab-tests.exe') @('--cpu-worker', (Join-Path $binary 'shader-cpu-reference.exe'))
 Invoke-Checked (Join-Path $buildRoot 'shader-lab-tests.exe') @('--real-worker', (Join-Path $binary 'shader-kyty-worker.exe'))
 

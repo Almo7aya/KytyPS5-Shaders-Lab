@@ -13,7 +13,9 @@ constitute a feature profile. No subgroup size is enforced on a GPU by this comp
 
 ## Schema
 
-Required: `schema: 1`, `api_version: "1.3"`, and `subgroup_size: 32` or `64`.
+Required: `schema: 1`, `api_version: "1.3"`, and power-of-two `subgroup_size` in 1..128.
+The compiler still accepts only 32 or 64. Other values support assessment of queried devices,
+including software Vulkan; they do not enable new Kyty lowering modes.
 The assessment currently targets the same Vulkan 1.3 environment as SPIRV-Tools validation.
 Other versions are rejected rather than silently interpreted as Vulkan 1.3.
 

@@ -48,8 +48,9 @@ packaged binaries, checksums and corresponding sources.
   SPIR-V feature/property requirements. Unknown support and runtime-compatibility limits remain explicit.
 - An isolated compute-fixture execution protocol for explicitly selected trusted backends,
   hash-verified initial resources, reference-output comparison and an explicit GPU opt-in gate.
-  A separate bounded CPU integer ISA model is available; GPU execution and trusted hardware
-  reference coverage are still required.
+  A separate bounded CPU integer ISA model and experimental
+  [Vulkan buffer-compute backend](docs/VULKAN_REPLAY.md) are available; broad GPU/graphics and
+  trusted hardware reference coverage remain open.
 - Captured compute SH-register/PM4 replay through the selected upstream register decoder
   and `PrepareProgram`, with required-state checks and per-write provenance.
 - Guest disassembly, instruction inventory, opcode histogram, CFG text/JSON/DOT, intermediate/final IR,
@@ -97,13 +98,13 @@ From this project directory, with a KytyPS5 checkout in the sibling `../KytyPS5`
 
 ```powershell
 cmake -S . -B build-kyty -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DKYTY_ROOT="../KytyPS5" -DSHADER_LAB_BUILD_KYTY_WORKER=ON
-cmake --build build-kyty --target shader-lab shader-kyty-worker shader-lab-tests --parallel 8
+cmake --build build-kyty --target shader-lab shader-kyty-worker shader-vulkan-replay shader-lab-tests --parallel 8
 ctest --test-dir build-kyty -R '^shader_lab_' --output-on-failure
 ```
 
 Outputs include `build-kyty/shader-lab.exe`, `build-kyty/shader-cpu-reference.exe`,
-`build-kyty/shader-kyty-worker.exe` and its required
-`libwinpthread-1.dll`. Keep the DLL beside the worker. The scanner itself does not need that DLL.
+`build-kyty/shader-kyty-worker.exe`, `build-kyty/shader-vulkan-replay.exe` and the required
+`libwinpthread-1.dll`. Keep the DLL beside these workers. The scanner itself does not need that DLL.
 The worker links the smaller compiler-only library, but the first configuration still visits
 upstream dependency setup. Subsequent compiler edits rebuild incrementally. Pass checkpoints use
 a generated build-tree copy of the upstream pipeline; the selected checkout's files are not edited.
@@ -511,8 +512,9 @@ reference provenance, commands, results and isolation limits. The shipped compil
 **not an execution backend**. Protocol fixtures use a test double; a separate
 [CPU reference backend](docs/CPU_REFERENCE.md) now interprets a bounded RDNA2 integer/global-buffer
 subset without Kyty code. Its actual subprocess tests use fixed expected bit patterns and an
-independent assembler check. These are not hardware certification. Broader reference coverage,
-GPU execution and graphics replay remain open milestone work.
+independent assembler check. These are not hardware certification.
+The separate [Vulkan backend](docs/VULKAN_REPLAY.md) implements opt-in buffer-compute dispatch
+and readback. Graphics, broader reference coverage and broader GPU replay remain open milestone work.
 
 ### Recorded reference-output comparison
 
@@ -627,8 +629,9 @@ preparation and explicit pixel compiler metadata are implemented as parts of mil
 declared host-feature checks are also implemented. A hash-bound
 [compiler resource-layout artifact](docs/COMPILER_LAYOUT.md) exports finalized descriptor arrays,
 materialized resource metadata and unresolved runtime offset slots for future replay work.
-It does not create runtime bindings or execute shaders. Graphics preparation/partners and actual
-device-query/runtime host validation remain open. The remaining
+The separate experimental Vulkan backend consumes that artifact, queries the selected device and
+executes a restricted buffer-compute subset. Graphics preparation/partners, broader runtime host
+validation and physical-hardware reference coverage remain open. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
 the development branch pending GitHub validation. Compiler-only results are not
 execution conformance.

@@ -161,7 +161,7 @@ jobs:
           -DKYTY_ROOT="${{ github.workspace }}/_Build/KytyPS5"
           -DSHADER_LAB_BUILD_KYTY_WORKER=ON
       - name: Build scanner, worker and tests
-        run: cmake --build build-release --target shader-lab shader-kyty-worker shader-cpu-reference shader-lab-tests --parallel 2
+        run: cmake --build build-release --target shader-lab shader-kyty-worker shader-cpu-reference shader-vulkan-replay shader-lab-tests --parallel 2
       - name: Test including real compiler integration
         run: |
           # This modifies only the disposable hosted runner, not users' machines.
@@ -187,10 +187,63 @@ jobs:
           path: build-release/Testing/Temporary/*.log
           if-no-files-found: ignore
 
+  vulkan:
+    name: Linux software Vulkan replay
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.resolve.outputs.repository }}
+          ref: ${{ needs.resolve.outputs.revision }}
+          path: _Build/KytyPS5
+          submodules: recursive
+          persist-credentials: false
+      - name: Install build and software Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes clang lld glslang-tools pkg-config \
+            libasound2-dev libdbus-1-dev libgl1-mesa-dev libpulse-dev libudev-dev \
+            libwayland-dev libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev \
+            libxkbcommon-dev libxrandr-dev libxss-dev libxtst-dev wayland-protocols \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools vulkan-validationlayers
+      - name: Configure and build real compiler and replay backend
+        run: |
+          cmake -S . -B build-vulkan -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= \
+            -DKYTY_ROOT="$GITHUB_WORKSPACE/_Build/KytyPS5" -DSHADER_LAB_BUILD_KYTY_WORKER=ON
+          cmake --build build-vulkan --target shader-lab-tests shader-vulkan-replay shader-kyty-worker --parallel 2
+      - name: Execute real Vulkan golden fixtures on the hosted software device
+        run: |
+          set -euo pipefail
+          icd=$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' -print -quit)
+          test -n "$icd"
+          export VK_ICD_FILENAMES="$icd"
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP"
+          vulkaninfo --summary
+          ctest --test-dir build-vulkan -R '^shader_lab_' --output-on-failure
+          build-vulkan/shader-lab-tests --vulkan-worker "$GITHUB_WORKSPACE/build-vulkan/shader-vulkan-replay" 2>&1 | tee build-vulkan/vulkan-fixtures.log
+      - name: Save software replay diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: software-vulkan-diagnostics
+          path: |
+            build-vulkan/vulkan-fixtures.log
+            build-vulkan/Testing/Temporary/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   release:
     name: Publish official main build
     if: needs.resolve.outputs.official == 'true' && github.ref == 'refs/heads/main'
-    needs: [resolve, linux, windows]
+    needs: [resolve, linux, windows, vulkan]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -214,4 +267,4 @@ jobs:
           # A unique tag per run/attempt prevents overwriting previous releases.
           gh release create "$RELEASE_TAG" ./* --target "$PROJECT_REVISION" \
             --title "Shader Lab $RELEASE_TAG (Kyty ${KYTY_REVISION:0:12})" \
-            --notes "Official KytyPS5/KytyPS5 compiler commit: $KYTY_REVISION. Shader Lab commit: $PROJECT_REVISION. Synthetic integration tests passed; semantic shader equivalence is not tested. See BUILD-INFO.json and the corresponding source archives for provenance."
+            --notes "Official KytyPS5/KytyPS5 compiler commit: $KYTY_REVISION. Shader Lab commit: $PROJECT_REVISION. Synthetic integration and software Vulkan fixture tests passed; general shader equivalence and physical-hardware conformance are not established. See BUILD-INFO.json and the corresponding source archives for provenance."

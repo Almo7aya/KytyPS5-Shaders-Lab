@@ -103,8 +103,8 @@ json normalize_host_profile(const json &host) {
     if (u32(host.at("schema")) != 1 || host.at("api_version") != "1.3")
         throw std::runtime_error("host profile requires schema 1 and Vulkan api_version 1.3");
     const auto subgroup = u32(host.at("subgroup_size"));
-    if (subgroup != 32 && subgroup != 64)
-        throw std::runtime_error("host subgroup_size must be 32 or 64");
+    if (!subgroup || subgroup > 128 || (subgroup & (subgroup - 1)))
+        throw std::runtime_error("host subgroup_size must be a power of two in 1..128");
     if (host.contains("enabled_features"))
         booleans(host.at("enabled_features"), features);
     std::set<std::string> properties;
