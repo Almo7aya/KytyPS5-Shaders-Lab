@@ -103,7 +103,7 @@ json minimize_repro(const MinimizeOptions &o) {
     if (!is_within(original_path, bundle) || !is_within(bundle / "repro.json", bundle))
         throw std::runtime_error("repro metadata escapes the bundle");
     auto original_bytes = read_bytes(original_path);
-    if (sha256(original_bytes) != descriptor.at("files").at("original-result.json"))
+    if (sha256(original_bytes) != descriptor.at("files").at("original-result.json").get<std::string>())
         throw std::runtime_error("original result hash mismatch");
     auto expected = failure_signature(json::parse(original_bytes.begin(), original_bytes.end()));
     if (expected.is_null())
@@ -159,7 +159,7 @@ json minimize_repro(const MinimizeOptions &o) {
         auto baseline = out / "baseline";
         replay_repro(bundle, worker, baseline, o.timeout_ms);
         if (hash_file(original_path) != sha256(original_bytes) ||
-            hash_file(bundle / "repro.json") != log.at("source_bundle_sha256"))
+            hash_file(bundle / "repro.json") != log.at("source_bundle_sha256").get<std::string>())
             throw std::runtime_error("source evidence changed during baseline replay");
         log["predicate"] = expected;
         auto first_summary = bounded_json(baseline / "run/results.json");
