@@ -12,8 +12,8 @@ json basic_pixel() {
             {"interpolator_settings", {0}},
             {"target_output_mode", {9, 0, 0, 0, 0, 0, 0, 0}}};
 }
-uint32_t vintrp(uint32_t dst, uint32_t mode) {
-    return (0x32u << 26) | (2u << 16) | (dst << 18) | (3u << 8) | mode;
+uint32_t vintrp(uint32_t dst, uint32_t mode, uint32_t opcode = 2) {
+    return (0x32u << 26) | (opcode << 16) | (dst << 18) | (3u << 8) | mode;
 }
 uint32_t exp0(uint32_t target, bool done) {
     return (0x3eu << 26) | (target << 4) | 15u | (done ? 1u << 11 : 0);
@@ -190,11 +190,17 @@ unsigned pixel_real_tests(const fs::path &root, Bytes input_header, const fs::pa
          "worker reports normalized pixel inputs");
     profile = basic_pixel();
     profile["ps_no_perspective"] = true;
-    auto [linear_details, linear_spv] =
-        compile("no-perspective", {vintrp(12, 2), exp0(0, true), exp1(12, 12, 12, 12), 0xbf810000u},
-                profile);
+    // P2 loads an interpolated attribute. MOV P0 loads a raw per-vertex value;
+    // the latter intentionally does not get a NoPerspective decoration upstream.
+    const std::vector<uint32_t> interpolated = {vintrp(12, 2, 1), exp0(0, true),
+                                                exp1(12, 12, 12, 12), 0xbf810000u};
+    auto [linear_details, linear_spv] = compile("no-perspective", interpolated, profile);
     test(linear_spv.find("NoPerspective") != std::string::npos,
          "no-perspective input reaches SPIR-V interpolation decorations");
+    profile["ps_no_perspective"] = false;
+    auto [smooth_details, smooth_spv] = compile("perspective", interpolated, profile);
+    test(smooth_spv.find("NoPerspective") == std::string::npos && smooth_spv != linear_spv,
+         "clearing no-perspective changes the same interpolated shader's interface");
     profile = basic_pixel();
     profile["target_output_mode"] = {4, 4, 0, 0, 0, 0, 0, 0};
     profile["target_export_mapping"] = {0x1b, 0xe4, 0xe4, 0xe4, 0xe4, 0xe4, 0xe4, 0xe4};
