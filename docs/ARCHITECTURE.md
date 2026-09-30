@@ -23,6 +23,11 @@ Rejected/encrypted SELF data also has no raw fallback. The adapter does not auth
 signed executables or decrypt them.
 `process.cpp` owns OS process/handle lifetime; it never invokes a shell.
 `run.cpp` owns worker scheduling, per-case identity, checkpoints, results and comparisons.
+`repro.cpp` owns portable single-case export and fresh replay. It binds both input hashes,
+the selected profile and original result; archived diagnostics are never execution inputs.
+Replay uses a caller-selected worker and reconstructs requests after relocation. The export
+does not embed an executable or authenticate the source evidence. Result statuses are observations,
+not a failure-preserving minimization oracle.
 `analysis.cpp` implements local research/triage operations.
 `kyty_worker.cpp` is the only source tied to Kyty's compiler API.
 

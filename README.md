@@ -44,6 +44,8 @@ packaged binaries, checksums and corresponding sources.
   memory-read trace, SPIR-V binary/disassembly and validator diagnostics.
 - Searchable offline HTML reports; failure grouping; run-to-run outcome/SPIR-V comparisons;
   hash-to-source lookup; correlation with `hash=0x...` observations from existing emulator logs.
+- Portable, content-verified single-case repro bundles and fresh isolated replay with an
+  explicitly selected worker. Repro artifacts retain private provenance; review before sharing.
 
 ## Important coverage limits
 
@@ -283,6 +285,38 @@ each context, not the entire campaign, and is reported as partial coverage.
 Names are labels, never paths. Output must not overlap the dataset or game inputs.
 After a hard crash, confirm no campaign is running before removing `.campaign-lock`.
 
+## Portable single-case reproductions
+
+Export one complete case ID from a run (or a campaign context's `results.json`):
+
+```powershell
+.\build-kyty\shader-lab.exe repro --dataset datasets/library --results runs/baseline/results.json --case HEADER_SHA256-CODE_SHA256 --output runs/repro-case
+.\build-kyty\shader-lab.exe replay --bundle runs/repro-case --worker .\build-kyty\shader-kyty-worker.exe --output runs/replayed-case
+```
+
+Use fresh output directories disjoint from the dataset, original run and game input.
+The bundle contains `header.bin`, `code.bin`, the exact selected `profile.json`, original
+result/provenance JSON and bounded diagnostic artifacts. It can be moved to another machine;
+`replay` constructs new absolute request paths and a one-case dataset. No executable, DLL or
+original game archive is copied. Supply a trusted worker and its required dependencies yourself.
+
+Every replay runs a fresh isolated process without cached results. `replay.json` distinguishes
+worker identity, deadline and outcome matches. A different worker is allowed for regression
+investigation and explicitly reported. Matching status is **not** proof of the same root cause
+or shader semantics. DLLs, host features and environment are not yet fingerprinted.
+New runs record their deadline; replaying an older run requires explicit `--timeout-ms N`.
+The replay's ordinary results can be passed to `report`, `compare`, `cluster` or another export.
+
+Input hashes are checked before execution; they detect corruption, not maliciously rewritten
+metadata or authentic game execution. Diagnostic copies use a fixed allowlist, canonical path
+containment, 64 MiB per-file and 128 MiB total artifact limits, with omissions recorded. Existing
+artifacts may be from earlier retries, so copied artifacts are never used as fresh verdicts.
+The descriptor is written last; a failed export without `repro.json` is not replayable.
+
+Bundles contain shader bytes and original paths, resource snapshots and diagnostics. Keep them
+out of version control and review redistribution rights before sharing. Export/replay is the
+foundation for minimization, not an instruction reducer or pass-level bisection implementation.
+
 ## Outcomes
 
 ### Recorded reference-output comparison
@@ -385,7 +419,8 @@ Use result JSON rather than a successful process exit as your regression gate.
 ## Next development milestones
 
 Work is tracked against all five items below. Multi-context campaign orchestration
-is implemented. Nested payload budgets and reference-output comparison are added
+is implemented, together with portable repro export/replay. ZIP32 and compressed clear SELF
+adapters, nested payload budgets and reference-output comparison are added
 components of milestones 2 and 3; neither milestone is complete. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
 the development branch pending GitHub validation. Compiler-only results are not

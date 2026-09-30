@@ -52,6 +52,7 @@ json run(const RunOptions &o) {
                     {"worker_sha256", worker_hash},
                     {"profile_sha256", profile_hash},
                     {"profile", profile},
+                    {"timeout_ms", o.timeout_ms},
                     {"semantic_correctness", "not_tested"},
                     {"results", json::object()}};
     std::vector<std::string> ids;

@@ -14,8 +14,10 @@ void usage() {
   shader-lab correlate --dataset DATASET --log EMULATOR_LOG --output trace.json
   shader-lab cluster --results RUN/results.json --output failures.json
   shader-lab verify --reference JSON --observed JSON --output comparison.json
+  shader-lab repro --dataset DATASET --results RUN/results.json --case CASE_ID --output NEW_BUNDLE
+  shader-lab replay --bundle BUNDLE --worker EXE --output NEW_RUN [--timeout-ms N]
 Scan recursively inspects all regular files, not just eboot.bin. Game files are read-only.
-No guest execution. No decryption. Compressed containers need prior unpacking.
+No guest execution. No decryption. Unsupported containers need prior unpacking.
 Compiler success and valid SPIR-V do NOT prove rendering/semantic correctness.
 )";
 }
@@ -40,7 +42,9 @@ int main(int argc, char **argv) {
             {"inspect", {"--dataset", "--hash", "--output"}},
             {"correlate", {"--dataset", "--log", "--output"}},
             {"cluster", {"--results", "--output"}},
-            {"verify", {"--reference", "--observed", "--output"}}};
+            {"verify", {"--reference", "--observed", "--output"}},
+            {"repro", {"--dataset", "--results", "--case", "--output"}},
+            {"replay", {"--bundle", "--worker", "--output", "--timeout-ms"}}};
         if (!allowed.contains(command))
             throw std::runtime_error("unknown command");
         for (int i = 2; i < argc; ++i) {
@@ -95,6 +99,18 @@ int main(int argc, char **argv) {
         }
         if (command == "report")
             sl::report(path("--dataset"), path("--results", false), path("--output"));
+        if (command == "repro") {
+            if (!args.contains("--case"))
+                throw std::runtime_error("missing --case");
+            auto result = sl::export_repro(path("--dataset"), path("--results"),
+                                          args.at("--case"), path("--output"));
+            std::cout << result.dump(2) << "\n";
+        }
+        if (command == "replay") {
+            auto result = sl::replay_repro(path("--bundle"), path("--worker"),
+                                          path("--output"), number("--timeout-ms", 0));
+            std::cout << result.dump(2) << "\n";
+        }
         if (command == "compare")
             sl::atomic_json(path("--output"), sl::compare(path("--before"), path("--after")));
         if (command == "inspect") {

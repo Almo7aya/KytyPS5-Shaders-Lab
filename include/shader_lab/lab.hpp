@@ -89,6 +89,10 @@ json run(const RunOptions &options);
 // Worker isolation and per-case cache semantics are inherited from run().
 json campaign(const RunOptions &options, const fs::path &plan);
 json verify_reference(const fs::path &reference, const fs::path &observed);
+json export_repro(const fs::path &dataset, const fs::path &results,
+                  const std::string &id, const fs::path &output);
+json replay_repro(const fs::path &bundle, const fs::path &worker,
+                  const fs::path &output, uint64_t timeout_ms = 0);
 json compare(const fs::path &before, const fs::path &after);
 json correlate(const fs::path &dataset, const fs::path &log);
 json inspect(const fs::path &dataset, std::string hash);

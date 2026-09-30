@@ -7,6 +7,7 @@
 using namespace sl;
 unsigned reference_tests(const fs::path &root);
 unsigned archive_tests(Bytes shader);
+unsigned repro_tests(const fs::path &root, Bytes shader, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -247,6 +248,7 @@ int main(int argc, char **argv) {
         auto profile = root / "profile.json";
         atomic_json(profile, {{"test_mode", "ok"}});
         auto exe = fs::absolute(path_from(argv[0]));
+        checks += repro_tests(root / "repro-fixtures", b, exe);
         RunOptions options{root / "dataset", root / "run", exe, profile, 2, 5000, 0, true};
         auto r = run(options);
         test(r["status_counts"]["fixture_pass"] == 1, "isolated process protocol");
