@@ -41,7 +41,8 @@ unsigned cpu_tests(const fs::path &root, Bytes input_header, const fs::path &wor
                                                  0x80000001u, 0xffffffffu, 42, 0x12345679u};
     auto run_case = [&](const std::vector<uint32_t> &code, unsigned wave, uint64_t exec,
                         unsigned count, const std::vector<uint32_t> &input,
-                        const std::vector<uint32_t> &expected, unsigned groups = 1) {
+                        const std::vector<uint32_t> &expected, unsigned groups = 1,
+                        const json &host = nullptr) {
         const auto dir = root / std::to_string(serial++), fixture_dir = dir / "fixture";
         auto header = std::vector<uint8_t>(input_header.begin(), input_header.end());
         for (unsigned i = 0; i < 4; ++i)
@@ -64,6 +65,8 @@ unsigned cpu_tests(const fs::path &root, Bytes input_header, const fs::path &wor
                           {"lds_size_dwords", 0},
                           {"scratch_size_dwords", 0},
                           {"float_mode", 192}}}};
+        if (!host.is_null())
+            profile["host"] = host;
         atomic_json(fixture_dir / "profile.json", profile);
         auto file = [&](const char *name) {
             return json{{"file", name}, {"sha256", hash_file(fixture_dir / name)}};
@@ -152,6 +155,11 @@ unsigned cpu_tests(const fs::path &root, Bytes input_header, const fs::path &wor
                  .at("status") == "match",
          "negative inline integer operand is an exact bit pattern");
     const std::vector<uint32_t> input(32, 0), expected(32, 1);
+    for (unsigned subgroup : {32u, 64u})
+        test(run_case(kernel, 32, 0xffffffffu, 32, input, expected, 1,
+                      {{"schema", 1}, {"api_version", "1.3"}, {"subgroup_size", subgroup}})
+                     .at("status") == "match",
+             "host compiler subgroup declarations do not alter guest reference execution");
     auto bad = kernel;
     bad.erase(bad.begin() + 3);
     test(run_case(bad, 32, 0xffffffffu, 32, input, expected).at("status") == "unsupported",

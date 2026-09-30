@@ -2,6 +2,7 @@
 // Semantics: AMD RDNA2 ISA guide, sections 12.7/12.8 and global memory.
 // Bitfields cross-checked with LLVM llvmorg-20.1.8 FLATInstructions.td and MC tests.
 #include "shader_lab/cpu_reference.hpp"
+#include "shader_lab/host_profile.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -147,7 +148,11 @@ struct Access {
 CpuReferenceResult cpu_reference(ExecutionInputs inputs) {
     const auto instructions = decode(inputs.code);
     const auto &profile = inputs.profile, &execution = inputs.execution;
-    keys(profile, {"schema", "mode", "stage", "wave_size", "user_data", "compute"});
+    keys(profile, {"schema", "mode", "stage", "wave_size", "user_data", "compute", "host",
+                   "host_subgroup_size"});
+    // Target-compiler host declarations do not change guest ISA reference semantics.
+    // Validate their schema/consistency, but never use them for lane execution.
+    (void)compiler_host_subgroup(profile);
     if (word(profile.at("schema")) != 1 || profile.at("mode") != "context_snapshot" ||
         profile.at("stage") != "CS" ||
         word(profile.at("wave_size")) != word(execution.at("wave_size")))

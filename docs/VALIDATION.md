@@ -46,6 +46,10 @@ is added; use the test output from your build as the authoritative result.
   masked/empty EXEC, fixed arithmetic/bitwise boundary vectors, undefined/pending register checks,
   memory bounds, conflicting accesses and truncated programs. Linux CI independently assembles
   the kernel with LLVM's GFX10.3 assembler. These do not certify RDNA hardware behavior.
+- Declared host-profile validation and emitted-requirement checks: unknown/disabled features,
+  subgroup stage/operation support, float widths, workgroup limits and extension requirements.
+  Real-worker fixtures exercise host32/host64 lowering and distinguish structural validation
+  success from host-property rejection. No Vulkan device is queried or created by these tests.
 - Duplicate origins, incremental scan reuse and shader-hash lookup.
 - Worker protocol, resumable results, failure isolation and timeout termination.
 - Portable repro relocation/replay, selected-profile identity, fresh attempts, overwrite

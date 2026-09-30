@@ -31,6 +31,11 @@ direct SGPR values; unsupplied registers are undefined, never invented as zero. 
 - `tg_size_en: false`, `lds_size_dwords: 0`, `scratch_size_dwords: 0`.
 - `float_mode`: an explicit byte value, recorded but irrelevant to this integer-only subset.
 
+Optional compiler-target `host` and `host_subgroup_size` declarations follow
+[the host profile schema](HOST_PROFILES.md). They are validated for consistency but do not
+change guest lane semantics in this independent model. Guest `wave_size` and `exec_mask`
+remain the execution inputs even when the compiler's declared host subgroup differs.
+
 This is a declared compute-entry contract, not proof of a game's actual launch state. Unknown
 profile fields and unsupported state are refused. The generic fixture runner first verifies
 header/code/profile/resource hashes; the backend verifies the copied request again before use.

@@ -205,8 +205,9 @@ function overviewHtml(c){
   return '<div class="step '+state+'">'+label+'<span>'+text+'</span></div>';
  }).join('');
  const reason=fatalMessage(c)||d.reason||r.error||(d.validator_messages||[])[0]?.message;
+ const hostEvidence=d.host_assessment?'<div class="key-evidence"><div class="section-title"><h3>Declared host requirements: '+esc(d.host_assessment.status)+'</h3><button type="button" class="shortcut" data-open-tab="context">Host details →</button></div><p>This is separate from SPIR-V validation. Actual device and runtime compatibility are not established.</p></div>':'';
  const evidence=reason?'<div class="key-evidence"><div class="section-title"><h3>Reported failure</h3><button type="button" class="shortcut" data-open-tab="diagnostics">Full diagnostics →</button></div><p>'+esc(reason)+'</p></div>':(d.unsupported||[]).length?'<div class="key-evidence"><h3>'+num(d.unsupported.length)+' unsupported instructions</h3>'+unsupportedHtml(c)+'<button type="button" class="shortcut" data-open-tab="diagnostics">Inspect diagnostics →</button></div>':'';
- return '<div class="verdict '+info[0]+'"><span class="badge '+info[0]+'">'+esc(info[1])+'</span><p class="answer">'+esc(info[2])+'</p><p>'+esc(info[3])+'</p><div class="semantic">Correct shader behavior? Not verified.</div><div class="next"><b>Next investigation step</b><p>'+esc(info[4])+'</p></div></div>'+evidence+
+ return '<div class="verdict '+info[0]+'"><span class="badge '+info[0]+'">'+esc(info[1])+'</span><p class="answer">'+esc(info[2])+'</p><p>'+esc(info[3])+'</p><div class="semantic">Correct shader behavior? Not verified.</div><div class="next"><b>Next investigation step</b><p>'+esc(info[4])+'</p></div></div>'+hostEvidence+evidence+
  section('Compiler journey','<div class="pipeline">'+pipeline+'</div>','Phase markers show execution progress, not semantic correctness. GPU execution and reference comparison were not performed.')+
  section('Recorded measurements','<div class="facts">'+fact('Header stage',c.shader.type)+fact('Effective compiler stage',d.stage)+fact('Code bytes',c.shader.code_bytes)+fact('Decoded instructions',d.decoded_instruction_count)+fact('IR blocks',d.ir_blocks)+fact('SPIR-V words',d.spirv_words)+fact('Worker duration',r.elapsed_ms===undefined?undefined:num(r.elapsed_ms)+' ms')+fact('Process exit code',r.exit_code)+fact('Result reused',r.cache_hit===undefined?undefined:r.cache_hit?'Yes — prior attempt':'No')+'</div><p class="muted">Duration is process wall time, not GPU time. Reused results retain the original duration. Exit code 0 means a response was returned, not that the shader passed.</p>')+
  '<p class="navigation-hint">Use Context for profile assumptions, Sources for extraction provenance, or Artifacts for generated compiler files.</p>';
@@ -215,6 +216,7 @@ function contextHtml(c){
  const d=c.details,r=c.result,profile=selectedProfile(c),assumptions=d.assumptions||[];
  return section('Context & confidence','<dl class="meta">'+pair('Context mode',d.context_mode||profile.mode||'Not recorded')+pair('Validation target',d.validation_environment)+pair('Kyty revision',d.kyty_revision,true)+pair('Dispatcher fallback',d.dispatcher_fallback)+'</dl><p class="warning">Header probes use inferred/default state. Supplied snapshots are not independently verified captures. Neither mode proves semantic correctness.</p>')+
  section('Recorded assumptions',assumptions.length?'<ul>'+assumptions.map(a=>'<li>'+esc(a)+'</li>').join(''):'<p class="muted">No assumptions were returned. This does not certify that runtime state was captured.</p>')+
+ (d.host_assessment?section('Declared host requirements', '<p>Requirement check: <b>'+esc(d.host_assessment.status)+'</b>. Actual device and runtime compatibility are not established.</p>'+pre(d.host_assessment)):'<p class="muted">No host requirement assessment was recorded.</p>')+
  (d.effective_compute?section('Effective compute configuration',pre(d.effective_compute)):'')+
  (d.effective_pixel?section('Effective pixel configuration and defaults',pre(d.effective_pixel)):'')+
  section('Selected input profile',pre(profile))+
@@ -226,6 +228,7 @@ const ARTIFACT_GROUPS=[
  ['Translation & resources',[['translated.ir','Intermediate representation after translation'],['final.ir','Final intermediate representation'],['header-registers.json','Header register values'],['memory-reads.json','Resource materialization read trace']]],
  ['Compiler passes',[['pass-trace.json','Ordered upstream pass entry/return checkpoints'],['pass-stop.ir','IR at an intentional prefix stop; not a correctness verdict']]],
  ['Captured state',[['captured-state.json','Ordered register/PM4 provenance and upstream preparation inputs']]],
+ ['Host requirements',[['host-assessment.json','Declared feature/property checks; not runtime compatibility']]],
  ['SPIR-V output',[['shader.spv','Emitted binary module'],['shader.spvasm','Human-readable SPIR-V assembly']]],
  ['Reproduction & worker evidence',[['request.json','Exact worker request and selected profile'],['response.json','Worker response and diagnostics'],['result.json','Runner outcome and timing'],['phase.json','Last compiler phase checkpoint'],['worker.log','Complete worker log']]]
 ];

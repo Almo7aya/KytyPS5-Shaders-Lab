@@ -14,6 +14,7 @@
 #include "kytyGitVersion.h"
 #include "shader_lab/compiler.hpp"
 #include "shader_lab/compiler_trace.hpp"
+#include "shader_lab/host_profile.hpp"
 #include "spirv-tools/libspirv.hpp"
 #include <algorithm>
 #include <atomic>
@@ -172,7 +173,7 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         const auto &profile = request.at("profile");
         only_keys(profile, {"schema", "mode", "host_subgroup_size", "wave_size", "stage",
                             "user_data", "memory", "compute", "pixel", "vertex", "shader_base",
-                            "diagnostics", "capture"});
+                            "diagnostics", "capture", "host"});
         if (profile.value("schema", 1) != 1)
             throw std::runtime_error("unsupported profile schema");
         auto mode = profile.value("mode", "header_probe");
@@ -181,9 +182,18 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
                 "mode must be header_probe, context_snapshot or captured_compute");
         if (mode == "captured_compute")
             only_keys(profile, {"schema", "mode", "stage", "host_subgroup_size", "shader_base",
-                                "memory", "capture", "diagnostics"});
+                                "memory", "capture", "diagnostics", "host"});
         else if (profile.contains("capture"))
             throw std::runtime_error("capture requires captured_compute mode");
+        const auto host = sl::normalize_host_profile(profile.value("host", sl::json(nullptr)));
+        const auto subgroup = sl::compiler_host_subgroup(profile);
+        result["effective_host_profile"] = host;
+        result["host_subgroup_size"] = subgroup;
+        result["assumptions"].push_back(
+            host.is_null()
+                ? "No host features supplied; subgroup size alone is not a target-device profile"
+                : "Host features are user-declared, not queried; requirement checks do not "
+                  "establish runtime compatibility");
         if (profile.contains("diagnostics")) {
             const auto &diagnostics = profile.at("diagnostics");
             only_keys(diagnostics, {"pass_trace", "stop_after_pass"});
@@ -383,7 +393,7 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
                 // Compute preparation reads code extent/scratch metadata, not vertex tables.
                 ShaderInit();
                 ShaderMapUserData(regs.cs_regs.data_addr, mapped);
-                compute.host_subgroup_size = value(profile, "host_subgroup_size", 32);
+                compute.host_subgroup_size = subgroup;
                 compute.dispatch_thread_dimensions =
                     (initiator & Pm4::COMPUTE_DISPATCH_INITIATOR_USE_THREAD_DIMENSIONS) != 0;
                 HW::ShaderRegisters shader_registers{};
@@ -437,7 +447,7 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
                     compute.threads_num[i] = threads[i];
                 auto r = reg(0x213);
                 compute.wave_size = options.wave_size;
-                compute.host_subgroup_size = value(profile, "host_subgroup_size", 32);
+                compute.host_subgroup_size = subgroup;
                 compute.float_mode =
                     uint8_t(value(c, "float_mode", (reg(0x212, 0xc0000) >> 12) & 255));
                 compute.lds_size_dwords = value(c, "lds_size_dwords", ((r >> 15) & 511) * 128);
@@ -516,9 +526,6 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
                                             "mesh or fused partner inferred");
         } else
             throw std::runtime_error("stage must be CS, PS or VS in this adapter");
-        auto subgroup = value(profile, "host_subgroup_size", 32);
-        if (subgroup != 32 && subgroup != 64)
-            throw std::runtime_error("host_subgroup_size must be 32 or 64");
         set_phase("translate");
         sl::compiler_pass(0, false);
         sl::compiler_pass(0, true);
@@ -599,6 +606,11 @@ int sl::execute_compiler_request_v1(const sl::fs::path &request_path) {
         sl::write_text(out / "shader.spvasm", disassembly);
         result["validator_messages"] = diagnostics;
         result["validation_environment"] = "Vulkan 1.3";
+        result["host_assessment"] = valid ? sl::assess_spirv_host(spv, host)
+                                          : sl::json{{"status", "not_assessed"},
+                                                     {"reason", "SPIR-V validation failed"},
+                                                     {"runtime_compatibility", "not_established"}};
+        sl::atomic_json(out / "host-assessment.json", result["host_assessment"]);
         return finish(valid ? "spirv_valid_under_profile" : "spirv_invalid_under_profile");
     } catch (const CompilerCheckpointStop &stop) {
         result["status"] = "pass_checkpoint_reached";

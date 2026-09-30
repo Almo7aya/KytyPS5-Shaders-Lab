@@ -44,6 +44,8 @@ packaged binaries, checksums and corresponding sources.
   profiles, optional supplied user-data and bounded memory snapshots.
 - Explicit pixel compiler metadata including barycentric/custom interpolation, export channel
   mappings, sample masks and dual-source/alpha-remap blending, with every default disclosed.
+- Declared Vulkan host profiles drive compute subgroup lowering and separately assess emitted
+  SPIR-V feature/property requirements. Unknown support and runtime-compatibility limits remain explicit.
 - An isolated compute-fixture execution protocol for explicitly selected trusted backends,
   hash-verified initial resources, reference-output comparison and an explicit GPU opt-in gate.
   A separate bounded CPU integer ISA model is available; GPU execution and trusted hardware
@@ -347,6 +349,8 @@ compute `PrepareProgram`. Guest wave size comes from the dispatch initiator; use
 group/thread inputs, LDS and floating-point mode come from prepared state. The capture
 profile cannot also specify probe `compute`, `wave_size` or `user_data` overrides.
 `host_subgroup_size` remains an explicit host assumption, not a queried GPU feature set.
+For feature/property declarations, use [host profiles](docs/HOST_PROFILES.md). Their separate
+requirement assessment does not replace structural validation or establish runtime compatibility.
 
 `captured-state.json` retains all writes, packet positions, final registers, dispatch and
 prepared user data. Results record effective compiler metadata and the preparation path.
@@ -620,8 +624,8 @@ adapters, nested payload budgets, reference-output comparison, the isolated exec
 protocol and a bounded independent integer CPU model are added
 components of milestones 2 and 3; neither milestone is complete. Bounded captured compute
 preparation and explicit pixel compiler metadata are implemented as parts of milestone 1;
-graphics preparation/partner and host-feature coverage
-remain open. The remaining
+declared host-feature checks are also implemented. Graphics preparation/partners and actual
+device-query/runtime host validation remain open. The remaining
 parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
 the development branch pending GitHub validation. Compiler-only results are not
 execution conformance.

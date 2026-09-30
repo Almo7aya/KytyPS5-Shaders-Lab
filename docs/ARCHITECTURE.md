@@ -31,6 +31,10 @@ evidence rather than a property the harness can authenticate.
 `cpu_reference.cpp` is a separate bounded integer ISA interpreter, linked only to the common
 fixture/file utilities. It does not use Kyty's compiler/decoder as an oracle. Its supported subset,
 undefined-state and memory-order limits are documented in [CPU_REFERENCE.md](CPU_REFERENCE.md).
+`host_profile.cpp` validates declared Vulkan target profiles and inventories emitted SPIR-V
+requirements. Its assessment is separate from structural validation and cannot certify a device
+or pipeline; see [HOST_PROFILES.md](HOST_PROFILES.md). Compute subgroup declarations reach the
+actual upstream compiler input rather than being report-only metadata.
 `run.cpp` owns worker scheduling, per-case identity, checkpoints, results and comparisons.
 `repro.cpp` owns portable single-case export and fresh replay. It binds both input hashes,
 the selected profile and original result; archived diagnostics are never execution inputs.

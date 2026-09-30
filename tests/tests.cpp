@@ -21,6 +21,8 @@ unsigned pass_real_tests(const fs::path &root, Bytes header, const fs::path &wor
 unsigned capture_tests(Bytes header);
 unsigned capture_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned pixel_tests(Bytes header);
+unsigned host_tests();
+unsigned host_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 unsigned pixel_real_tests(const fs::path &root, Bytes header, const fs::path &worker);
 namespace {
 void check(bool ok, const char *what) {
@@ -101,6 +103,7 @@ int main(int argc, char **argv) {
         }
         unsigned checks = 0;
         checks += pixel_tests(header());
+        checks += host_tests();
         auto test = [&](bool ok, const char *name) {
             check(ok, name);
             ++checks;
@@ -488,6 +491,7 @@ int main(int argc, char **argv) {
             checks += pass_real_tests(root / "real-passes", header(), options.worker);
             checks += capture_real_tests(root / "real-capture", header(), options.worker);
             checks += pixel_real_tests(root / "real-pixel", header(), options.worker);
+            checks += host_real_tests(root / "real-host", header(), options.worker);
         }
         std::cout << "PASS: " << checks << " checks (fixtures; no hardware/game conformance)\n";
         return 0;
