@@ -13,6 +13,7 @@ void usage() {
   shader-lab inspect --dataset DATASET --hash KYTY_HASH_OR_CASE_ID --output shader.json
   shader-lab correlate --dataset DATASET --log EMULATOR_LOG --output trace.json
   shader-lab cluster --results RUN/results.json --output failures.json
+  shader-lab verify --reference JSON --observed JSON --output comparison.json
 Scan recursively inspects all regular files, not just eboot.bin. Game files are read-only.
 No guest execution. No decryption. Compressed containers need prior unpacking.
 Compiler success and valid SPIR-V do NOT prove rendering/semantic correctness.
@@ -38,7 +39,8 @@ int main(int argc, char **argv) {
             {"compare", {"--before", "--after", "--output"}},
             {"inspect", {"--dataset", "--hash", "--output"}},
             {"correlate", {"--dataset", "--log", "--output"}},
-            {"cluster", {"--results", "--output"}}};
+            {"cluster", {"--results", "--output"}},
+            {"verify", {"--reference", "--observed", "--output"}}};
         if (!allowed.contains(command))
             throw std::runtime_error("unknown command");
         for (int i = 2; i < argc; ++i) {
@@ -104,6 +106,14 @@ int main(int argc, char **argv) {
             sl::atomic_json(path("--output"), sl::correlate(path("--dataset"), path("--log")));
         if (command == "cluster")
             sl::atomic_json(path("--output"), sl::cluster(path("--results")));
+        if (command == "verify") {
+            auto output = path("--output");
+            if (sl::fs::exists(output))
+                throw std::runtime_error("verify requires a fresh output file to preserve evidence");
+            auto result = sl::verify_reference(path("--reference"), path("--observed"));
+            sl::atomic_json(output, result);
+            return result["status"] == "match" ? 0 : 4;
+        }
         return 0;
     } catch (const std::exception &ex) {
         std::cerr << "error: " << ex.what() << "\n";

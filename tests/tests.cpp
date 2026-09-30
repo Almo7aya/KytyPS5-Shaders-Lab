@@ -5,6 +5,7 @@
 #include <zstd.h>
 #endif
 using namespace sl;
+unsigned reference_tests(const fs::path &root);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -139,6 +140,48 @@ int main(int argc, char **argv) {
         test(std::any_of(zs.candidates.begin(), zs.candidates.end(),
                          [](const auto &c) { return c.method == "zstd/amdgpu_elf"; }),
              "bounded Zstandard ELF extraction");
+        auto compress = [&](Bytes input) {
+            std::vector<uint8_t> result(ZSTD_compressBound(input.size()));
+            auto length = ZSTD_compress(result.data(), result.size(), input.data(), input.size(), 3);
+            test(!ZSTD_isError(length), "nested frame fixture compression");
+            result.resize(length);
+            return result;
+        };
+        auto nested = compress(compressed);
+        auto nested_result = extract_containers(nested);
+        test(std::any_of(nested_result.candidates.begin(), nested_result.candidates.end(),
+                         [](const auto &c) {
+                             return c.method == "zstd/zstd/amdgpu_elf" &&
+                                    c.offset_space == "zstd_frame@0x0/zstd_frame@0x0/file";
+                         }), "nested Zstandard retains every offset coordinate layer");
+        auto nested_self = extract_containers(compress([&] {
+            auto clear_self = self;
+            put(clear_self, 32, 0x800, 8);
+            return clear_self;
+        }()));
+        test(std::any_of(nested_self.candidates.begin(), nested_self.candidates.end(),
+                         [](const auto &c) { return c.method == "zstd/self/amdgpu_elf"; }),
+             "nested SELF normalization retains container provenance");
+        for (unsigned depth = 0; depth < 4; ++depth)
+            nested = compress(nested);
+        auto deep_result = extract_containers(nested);
+        test(deep_result.limited && std::any_of(deep_result.findings.begin(), deep_result.findings.end(),
+                                               [](const auto &f) {
+                                                   return f.value("kind", "") == "container_depth_budget";
+                                               }), "nested payload depth budget is explicit");
+        std::vector<uint8_t> many_frames;
+        auto empty_frame = compress({});
+        for (unsigned frame = 0; frame < 4097; ++frame)
+            many_frames.insert(many_frames.end(), empty_frame.begin(), empty_frame.end());
+        auto many_result = extract_containers(many_frames);
+        test(many_result.limited, "aggregate frame count bounds empty-frame workloads");
+        std::vector<uint8_t> child_frames;
+        for (unsigned frame = 0; frame < 3000; ++frame)
+            child_frames.insert(child_frames.end(), empty_frame.begin(), empty_frame.end());
+        auto parent_frame = compress(child_frames);
+        auto siblings = parent_frame;
+        siblings.insert(siblings.end(), parent_frame.begin(), parent_frame.end());
+        test(extract_containers(siblings).limited, "nested siblings share one member budget");
 #endif
         auto bad = b;
         put(bad, 40, UINT64_MAX - 12, 8);
@@ -185,6 +228,7 @@ int main(int argc, char **argv) {
                 fs::remove_all(p, ec);
             }
         } cleanup{root};
+        checks += reference_tests(root / "reference-fixtures");
         write_bytes(root / "games/Game/eboot.bin", b);
         write_bytes(root / "games/Game/copy.bin", b);
         auto d = scan({root / "games", root / "dataset"});

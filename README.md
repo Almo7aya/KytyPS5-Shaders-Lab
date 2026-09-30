@@ -23,8 +23,8 @@ packaged binaries, checksums and corresponding sources.
   not guessed. The 256-byte alignment heuristic is retained and disclosed.
 - Clear SELF load-segment reconstruction, with original-file, ELF-file and virtual-address mappings.
   Candidate bytes must be backed by actual segments, not zero-filled holes.
-- Independently framed Zstandard payload discovery when built with the Kyty worker dependencies.
-  Declared-size, decompression-budget and candidate limits protect against oversized inputs.
+- Independently framed and nested Zstandard payload discovery when built with the Kyty worker dependencies.
+  Shared expansion, nesting-depth, frame-count and candidate limits bound work across the input tree.
 - Existing `.header` / `.code` pairs, without requiring Python.
 - SHA-256 identity for **both header and code**, plus Kyty-compatible XXH3-64 code hashes.
   Different headers are never collapsed just because their code hashes match. All origins are retained.
@@ -44,7 +44,7 @@ packaged binaries, checksums and corresponding sources.
 
 “All regular files visited” is not “all shaders recovered.” Encryption, game-specific archive
 indexes, Oodle/Kraken, ZIP/7z/PSARC/Unreal container decoding, compressed SELF segments, unknown-size
-or dictionary-dependent Zstandard frames, nested compressed layers, cross-file bare-header pairing,
+or dictionary-dependent Zstandard frames, unsupported nested formats, cross-file bare-header pairing,
 patched/runtime-generated code and dynamically loaded shader libraries can leave shaders undiscovered.
 Container warnings and rejected/unpaired candidates remain in the manifest and report. Use authorized,
 already-unpacked data where necessary. No decryption keys, DRM bypass or game redistribution is needed.
@@ -149,6 +149,12 @@ To investigate a result, use its `artifacts` path in `results.json`. Start with 
 the case ID in the manifest for its original file, offsets, offset coordinate system and evidence.
 Offsets in a reconstructed ELF or decompressed frame are deliberately not labeled as physical
 offsets in the original game file.
+
+Nested Zstandard scanning retains each frame's coordinate layer and versioned adapter evidence.
+Per input file, expansion is bounded to 512 MiB total, 256 MiB per frame, four decoded layers
+and 4,096 frame candidates across all layers. Intermediate decoded containers also consume the
+budget; it is not reset by nesting. Limit findings disclose incomplete exploration. Clear SELF
+normalization also works inside decoded frames; compressed SELF blocks still need another adapter.
 
 ## Reading the HTML report
 
@@ -257,6 +263,86 @@ After a hard crash, confirm no campaign is running before removing `.campaign-lo
 
 ## Outcomes
 
+### Recorded reference-output comparison
+
+`verify` is the output-comparison component of the reference-execution milestone.
+It does not yet dispatch GPU work or capture hardware reference data:
+
+```powershell
+.\build-kyty\shader-lab.exe verify --reference captures/reference.json --observed captures/observed.json --output runs/comparison.json
+```
+
+Use a fresh output filename. Exit `0` means the recorded fixture outputs match;
+`4` means mismatch or incomparable fixture/layout, and `2` means invalid evidence
+or setup. A record has this shape (the hash placeholders must be replaced with
+actual lowercase SHA-256 values):
+
+```json
+{
+  "schema": 1,
+  "fixture": {
+    "id": "compute-fixture-1",
+    "shader_sha256": "SHADER_SHA256",
+    "input_sha256": "INPUT_SHA256",
+    "profile_sha256": "PROFILE_SHA256",
+    "wave_size": 32,
+    "exec_mask": "00000000ffffffff"
+  },
+  "reference_source": {
+    "kind": "independent_model",
+    "identifier": "model-and-version",
+    "method": "Explain how expected outputs were obtained independently"
+  },
+  "outputs": {
+    "result": {
+      "file": "result.bin",
+      "sha256": "RESULT_SHA256",
+      "kind": "buffer",
+      "type": "u32",
+      "comparison": {"mode": "exact"}
+    }
+  }
+}
+```
+
+The observed record uses the same fixture identity and resource layout but names
+its own output files and hashes. `reference_source` is required on the reference
+record only; `hardware_capture` is also an accepted source kind. The comparator
+records this provenance as **user-supplied, not independently authenticated**.
+Fixture fingerprints and wave/EXEC state must agree exactly. They describe the
+claimed execution inputs; this comparison command cannot attest that an external
+producer actually executed them. Output file contents are hash-checked directly.
+
+Integer resources (`u8`, `u32`, `i32`) are compared exactly in little-endian order.
+For `f32`, the reference must specify all of these rules; the observed record
+cannot loosen the reference's tolerances:
+
+```json
+{
+  "mode": "float32",
+  "absolute_tolerance": 0.0,
+  "relative_tolerance": 0.0,
+  "max_ulps": 0,
+  "nan_policy": "reject",
+  "signed_zero_policy": "distinct"
+}
+```
+
+Finite values match if their difference is at most `absolute_tolerance +
+relative_tolerance * max(abs(expected), abs(observed))`, or their ordered float32
+ULP distance is within `max_ulps`. Infinities require identical sign. NaNs never
+match under `reject`; `equal_bits` instead requires identical NaN bit patterns.
+Signed zeros require identical sign unless `signed_zero_policy` is `equal`.
+These policies are explicit fixture choices, not claimed RDNA floating-point rules.
+
+An image uses `kind: "image"` plus `shape: [width, height, depth, channels]` and
+tightly packed row-major scalar components. Padded, tiled, compressed and opaque
+image formats must first be normalized by their capture/replay backend.
+Each record supports 1–128 outputs; total reference plus observed bytes are
+bounded to 128 MiB. Resource paths must resolve inside their record directory.
+The report counts every mismatch and retains the first 64 examples per output.
+A match is scoped to these recorded outputs, never a general shader-correctness claim.
+
 | Status | What it establishes |
 | --- | --- |
 | `spirv_valid_under_profile` | Emission succeeded and SPIRV-Tools accepted the module under this profile. |
@@ -277,8 +363,11 @@ Use result JSON rather than a successful process exit as your regression gate.
 ## Next development milestones
 
 Work is tracked against all five items below. Multi-context campaign orchestration
-is implemented; the remaining parts of milestone 5 and milestones 1–4 are still
-open. This does not turn compiler-only results into execution conformance.
+is implemented. Nested payload budgets and reference-output comparison are added
+components of milestones 2 and 3; neither milestone is complete. The remaining
+parts of milestone 5 and milestones 1–4 remain open. New milestone work stays on
+the development branch pending GitHub validation. Compiler-only results are not
+execution conformance.
 
 1. Captured PM4/header-to-state replay through upstream preparation, full supported graphics-stage
    metadata, fused partner identity and host feature profiles.

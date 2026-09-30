@@ -6,13 +6,19 @@
 #include <zstd.h>
 #endif
 namespace sl {
-Extraction extract_containers(Bytes bytes, size_t limit) {
+namespace {
+// Shared across the entire input tree, not reset for each nested frame. Charge
+// every expanded layer, including intermediate containers, before allocating.
+struct ContainerBudget {
+    uint64_t expanded = 0;
+    size_t frames = 0;
+};
+Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBudget &budget,
+                         [[maybe_unused]] unsigned depth) {
     auto out = extract(bytes, limit);
 #ifdef SL_HAVE_ZSTD
     // Scan independently framed Zstandard data. Unknown-size/dictionary streams
     // remain coverage gaps; never allocate from an unchecked declared size.
-    uint64_t expanded = 0;
-    size_t frames = 0;
     for (size_t pos = 0; pos + 4 <= bytes.size();) {
         auto p = static_cast<const uint8_t *>(
             std::memchr(bytes.data() + pos, 0x28, bytes.size() - pos - 3));
@@ -23,7 +29,9 @@ Extraction extract_containers(Bytes bytes, size_t limit) {
             ++pos;
             continue;
         }
-        if (++frames > 4096) {
+        if (++budget.frames > 4096) {
+            out.findings.push_back({{"kind", "container_member_budget"}, {"offset", pos},
+                                    {"max_members", 4096}});
             out.limited = true;
             break;
         }
@@ -34,13 +42,21 @@ Extraction extract_containers(Bytes bytes, size_t limit) {
             ++pos;
             continue;
         }
+        if (depth >= 4) {
+            out.findings.push_back({{"kind", "container_depth_budget"}, {"offset", pos},
+                                    {"max_depth", 4}, {"adapter", "zstd/1"}});
+            out.limited = true;
+            pos += packed;
+            continue;
+        }
         if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR ||
-            size > 256 * 1024 * 1024 || expanded + size > 512 * 1024 * 1024) {
+            size > 256 * 1024 * 1024 || size > 512 * 1024 * 1024 - budget.expanded) {
             out.findings.push_back({{"kind", "zstd_size_limit_or_unknown"}, {"offset", pos}});
             out.limited = true;
             pos += packed;
             continue;
         }
+        budget.expanded += size;
         std::vector<uint8_t> decoded(size_t(size), 0);
         auto actual = ZSTD_decompress(decoded.data(), decoded.size(), frame.data(), packed);
         if (ZSTD_isError(actual) || actual != size) {
@@ -51,23 +67,26 @@ Extraction extract_containers(Bytes bytes, size_t limit) {
             pos += packed;
             continue;
         }
-        expanded += size;
         auto inner =
-            extract(decoded, limit > out.candidates.size() ? limit - out.candidates.size() : 0);
+            extract_layer(decoded, limit > out.candidates.size() ? limit - out.candidates.size() : 0,
+                          budget, depth + 1);
+        const auto frame_space = "zstd_frame@0x" + hex(pos);
         for (auto &c : inner.candidates) {
-            c.offset_space = "zstd_frame@0x" + hex(pos);
+            c.offset_space = frame_space + "/" + c.offset_space;
             c.method = "zstd/" + c.method;
             c.evidence.push_back(
-                {{"frame_offset", pos}, {"compressed_bytes", packed}, {"expanded_bytes", size}});
+                {{"adapter", "zstd/1"}, {"frame_offset", pos}, {"depth", depth},
+                 {"compressed_bytes", packed}, {"expanded_bytes", size}});
             out.candidates.push_back(std::move(c));
         }
         for (auto &f : inner.findings) {
-            f["offset_space"] = "zstd_frame@0x" + hex(pos);
+            f["offset_space"] = frame_space + "/" + f.value("offset_space", "file");
             out.findings.push_back(std::move(f));
         }
         out.limited = out.limited || inner.limited;
         out.findings.push_back(
-            {{"kind", "zstd_frame_scanned"}, {"offset", pos}, {"expanded_bytes", size}});
+            {{"kind", "zstd_frame_scanned"}, {"adapter", "zstd/1"}, {"offset", pos},
+             {"expanded_bytes", size}, {"depth", depth}});
         pos += packed;
     }
 #endif
@@ -129,6 +148,13 @@ Extraction extract_containers(Bytes bytes, size_t limit) {
         }
         if (!extent)
             return out;
+        if (extent > 512 * 1024 * 1024 - budget.expanded) {
+            out.findings.push_back({{"kind", "container_expansion_budget"},
+                                    {"adapter", "self/1"}, {"expanded_bytes", extent}});
+            out.limited = true;
+            return out;
+        }
+        budget.expanded += extent;
         std::vector<uint8_t> image(size_t(extent), 0);
         for (const auto &s : segments)
             std::copy_n(bytes.begin() + std::ptrdiff_t(s.src), size_t(s.size),
@@ -170,5 +196,10 @@ Extraction extract_containers(Bytes bytes, size_t limit) {
         out.findings.push_back({{"kind", "rejected_self"}, {"detail", ex.what()}});
     }
     return out;
+}
+} // namespace
+Extraction extract_containers(Bytes bytes, size_t limit) {
+    ContainerBudget budget;
+    return extract_layer(bytes, limit, budget, 0);
 }
 } // namespace sl
