@@ -226,8 +226,34 @@ For different metadata per shader, supply a profile bundle:
 ```
 
 Replace the placeholder key with an actual full case ID. Unknown IDs/fields are rejected.
-Profiles select one context per case per run. Use separate runs for multiple contexts or host
-feature assumptions. The worker's checked-in profile parser is the authoritative supported field list.
+Profiles select one context per case per run. The worker's checked-in profile parser is the
+authoritative supported field list.
+
+### Multi-context campaigns
+
+Use a campaign to run the corpus under several explicit profiles or profile bundles:
+
+```powershell
+.\build-kyty\shader-lab.exe campaign --dataset datasets/all-games --worker build-kyty/shader-kyty-worker.exe --plan profiles/campaign.example.json --output runs/campaign --jobs 4
+```
+
+A schema-1 plan contains 1–128 `contexts`, each with a unique `name` and an inline
+`profile` object. A profile can also be a `default`/`cases` bundle as shown above.
+Contexts run sequentially, with `--jobs` isolated case workers inside each context.
+The example compares wave32 and wave64 probes; neither is a captured ground truth.
+
+`campaign.json` checkpoints context progress and links each context's ordinary
+`results.json`, which can be passed to `report`, `compare` or `cluster`. It also
+lists case IDs whose outcomes or SPIR-V hashes differ between contexts. Those
+differences are observations, not proof of regressions or semantic correctness.
+Worker failures remain individual results rather than terminating the campaign.
+
+Resume caches include the complete plan, dataset manifest, worker hash, deadline
+and case limit. Changed inputs create a new campaign directory without deleting
+earlier evidence. `--no-resume` reruns the selected contexts. `--limit` applies to
+each context, not the entire campaign, and is reported as partial coverage.
+Names are labels, never paths. Output must not overlap the dataset or game inputs.
+After a hard crash, confirm no campaign is running before removing `.campaign-lock`.
 
 ## Outcomes
 
@@ -249,6 +275,10 @@ manifest file statuses for read failures/coverage gaps even after exit 0. No sta
 Use result JSON rather than a successful process exit as your regression gate.
 
 ## Next development milestones
+
+Work is tracked against all five items below. Multi-context campaign orchestration
+is implemented; the remaining parts of milestone 5 and milestones 1–4 are still
+open. This does not turn compiler-only results into execution conformance.
 
 1. Captured PM4/header-to-state replay through upstream preparation, full supported graphics-stage
    metadata, fused partner identity and host feature profiles.

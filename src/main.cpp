@@ -7,6 +7,7 @@ void usage() {
     std::cout << R"(PS5 Shader Lab 0.1.0 -- offline shader extraction and compiler regression lab
   shader-lab scan --input GAMES --output DATASET [--max-files N] [--max-file-mb N] [--no-resume]
   shader-lab run --dataset DATASET --worker EXE --output RUN [--profile JSON] [--jobs N] [--timeout-ms N] [--limit N] [--no-resume]
+  shader-lab campaign --dataset DATASET --worker EXE --plan JSON --output CAMPAIGN [--jobs N] [--timeout-ms N] [--limit N] [--no-resume]
   shader-lab report --dataset DATASET --output report.html [--results RUN/results.json]
   shader-lab compare --before RUN/results.json --after RUN/results.json --output diff.json
   shader-lab inspect --dataset DATASET --hash KYTY_HASH_OR_CASE_ID --output shader.json
@@ -33,6 +34,7 @@ int main(int argc, char **argv) {
              {"--dataset", "--worker", "--output", "--profile", "--jobs", "--timeout-ms",
               "--limit"}},
             {"report", {"--dataset", "--output", "--results"}},
+            {"campaign", {"--dataset", "--worker", "--plan", "--output", "--jobs", "--timeout-ms", "--limit"}},
             {"compare", {"--before", "--after", "--output"}},
             {"inspect", {"--dataset", "--hash", "--output"}},
             {"correlate", {"--dataset", "--log", "--output"}},
@@ -41,7 +43,7 @@ int main(int argc, char **argv) {
             throw std::runtime_error("unknown command");
         for (int i = 2; i < argc; ++i) {
             std::string k = argv[i];
-            if (k == "--no-resume" && (command == "run" || command == "scan")) {
+            if (k == "--no-resume" && (command == "run" || command == "scan" || command == "campaign")) {
                 resume = false;
                 continue;
             }
@@ -78,14 +80,15 @@ int main(int argc, char **argv) {
             std::cout << "Extracted " << r["shader_count"] << " header+code cases.\n";
             return r["limited"].get<bool>() || !r["traversal_errors"].empty() ? 3 : 0;
         }
-        if (command == "run") {
+        if (command == "run" || command == "campaign") {
             auto jobs = number("--jobs", 1);
             if (jobs > 64 || !jobs)
                 throw std::runtime_error("jobs must be 1..64");
-            auto r = sl::run({path("--dataset"), path("--output"), path("--worker"),
-                              path("--profile", false), unsigned(jobs),
-                              number("--timeout-ms", 30000), number("--limit", 0), resume});
-            std::cout << r["status_counts"].dump(2) << "\n";
+            sl::RunOptions options{path("--dataset"), path("--output"), path("--worker"),
+                                   path("--profile", false), unsigned(jobs),
+                                   number("--timeout-ms", 30000), number("--limit", 0), resume};
+            auto r = command == "campaign" ? sl::campaign(options, path("--plan")) : sl::run(options);
+            std::cout << (command == "campaign" ? r["contexts"] : r["status_counts"]).dump(2) << "\n";
             return 0;
         }
         if (command == "report")

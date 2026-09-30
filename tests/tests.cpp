@@ -288,6 +288,77 @@ int main(int argc, char **argv) {
         test(cluster(root / "run/results.json")["groups"].size() == 1, "failure grouping");
         test(compare(root / "run/results.json", root / "run/results.json")["changes"].empty(),
              "identical regression comparison");
+        auto campaign_path = root / "campaign-plan.json";
+        json campaign_plan = {
+            {"schema", 1},
+            {"contexts", json::array({
+                {{"name", "success"}, {"profile", {{"test_mode", "ok"}}}},
+                {{"name", "../failure"}, {"profile", {{"test_mode", "error"}}}}
+            })}};
+        atomic_json(campaign_path, campaign_plan);
+        RunOptions campaign_options{root / "dataset", root / "campaign", exe, {}, 2, 5000, 0, true};
+        auto campaign_result = campaign(campaign_options, campaign_path);
+        test(campaign_result["state"] == "completed" && campaign_result["contexts"].size() == 2,
+             "campaign executes every named context");
+        test(campaign_result["contexts"][0]["status_counts"].value("fixture_pass", 0) == 1 &&
+                 campaign_result["contexts"][1]["status_counts"].value("worker_crash_or_error", 0) == 1,
+             "campaign retains per-context failures without aborting");
+        test(campaign_result["context_sensitive_cases"].size() == 1 &&
+                 campaign_result["semantic_correctness"] == "not_tested",
+             "campaign differences do not claim semantic validation");
+        auto campaign_results_path = root / "campaign" /
+            path_from(campaign_result["contexts"][1]["results"].get<std::string>());
+        test(is_within(campaign_results_path, root / "campaign") && fs::exists(campaign_results_path),
+             "untrusted context names never become output paths");
+        campaign_result = campaign(campaign_options, campaign_path);
+        for (const auto &context : campaign_result["cases"].begin().value())
+            test(context["cache_hit"] == true, "campaign resumes each context independently");
+        auto original_campaign_key = campaign_result["campaign_key"];
+        campaign_options.resume = false;
+        campaign_result = campaign(campaign_options, campaign_path);
+        for (const auto &context : campaign_result["cases"].begin().value())
+            test(context["cache_hit"] == false, "campaign no-resume reruns each context");
+        campaign_options.resume = true;
+        campaign_plan["contexts"][1]["profile"]["test_mode"] = "ok";
+        atomic_json(campaign_path, campaign_plan);
+        campaign_result = campaign(campaign_options, campaign_path);
+        test(campaign_result["campaign_key"] != original_campaign_key &&
+                 campaign_result["context_sensitive_cases"].empty(),
+             "changed plan gets fresh identity and no stale differences");
+        auto reject_campaign = [&](const json &plan, const RunOptions &selected, const char *name) {
+            atomic_json(campaign_path, plan);
+            bool rejected = false;
+            try { campaign(selected, campaign_path); }
+            catch (const std::exception &) { rejected = true; }
+            test(rejected, name);
+        };
+        auto invalid_campaign = campaign_plan;
+        invalid_campaign["contexts"][1]["name"] = "success";
+        reject_campaign(invalid_campaign, campaign_options, "duplicate campaign context rejected");
+        invalid_campaign = campaign_plan;
+        invalid_campaign["contexts"][0]["profile"] = "profile.json";
+        reject_campaign(invalid_campaign, campaign_options, "non-inline campaign profile rejected");
+        invalid_campaign = campaign_plan;
+        invalid_campaign["contexts"][0]["profile"] = {{"default", json::object()},
+                                                     {"cases", {{"missing", json::object()}}}};
+        reject_campaign(invalid_campaign, campaign_options, "unknown campaign case rejected");
+        invalid_campaign = campaign_plan;
+        invalid_campaign["contexts"] = json::array();
+        reject_campaign(invalid_campaign, campaign_options, "empty campaign rejected");
+        invalid_campaign = campaign_plan;
+        invalid_campaign["unknown"] = 1;
+        reject_campaign(invalid_campaign, campaign_options, "unknown campaign option rejected");
+        auto invalid_options = campaign_options;
+        invalid_options.output = root / "dataset";
+        reject_campaign(campaign_plan, invalid_options, "campaign cannot overwrite dataset");
+        invalid_options.output = root / "games";
+        reject_campaign(campaign_plan, invalid_options, "campaign cannot overwrite game input");
+        invalid_options = campaign_options;
+        invalid_options.timeout_ms = 0;
+        reject_campaign(campaign_plan, invalid_options, "zero campaign timeout rejected");
+        fs::create_directory(root / "campaign/.campaign-lock");
+        reject_campaign(campaign_plan, campaign_options, "concurrent campaign writer rejected");
+        fs::remove(root / "campaign/.campaign-lock");
         if (argc == 3 && std::string(argv[1]) == "--real-worker") {
             atomic_json(profile, {{"schema", 1}, {"stage", "CS"}, {"mode", "header_probe"}});
             options.worker = fs::absolute(path_from(argv[2]));

@@ -85,6 +85,9 @@ struct RunOptions {
     bool resume = true;
 };
 json run(const RunOptions &options);
+// A campaign runs the same corpus under multiple explicit, named contexts.
+// Worker isolation and per-case cache semantics are inherited from run().
+json campaign(const RunOptions &options, const fs::path &plan);
 json compare(const fs::path &before, const fs::path &after);
 json correlate(const fs::path &dataset, const fs::path &log);
 json inspect(const fs::path &dataset, std::string hash);
