@@ -8,6 +8,7 @@ Do not redistribute private datasets merely because their output directory is po
 | KytyPS5, user-selected checkout | Real shader compiler and worker link closure | GPL-2.0; original Kyty code also carries MIT notices; preserve upstream notices |
 | nlohmann/json | Local manifests and worker protocol | MIT; https://github.com/nlohmann/json |
 | xxHash | Emulator-compatible XXH3-64 code identity | BSD-2-Clause; https://github.com/Cyan4973/xxHash |
+| zlib 1.3.2 | ZIP Deflate decoding and CRC32 | zlib license; https://github.com/madler/zlib |
 | Zstandard, from selected Kyty build | Bounded frame decompression | BSD-3-Clause or GPL-2.0; https://github.com/facebook/zstd |
 | SPIRV-Tools / SPIRV-Headers, from Kyty | Structural validation and disassembly | Apache-2.0; Khronos repositories |
 

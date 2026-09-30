@@ -6,6 +6,7 @@
 #endif
 using namespace sl;
 unsigned reference_tests(const fs::path &root);
+unsigned archive_tests(Bytes shader);
 namespace {
 void check(bool ok, const char *what) {
     if (!ok)
@@ -96,6 +97,7 @@ int main(int argc, char **argv) {
         put(h, 0x44, 3, 4);
         test(!valid_header(h, why), "misaligned code");
         auto b = elf();
+        checks += archive_tests(b);
         auto e = extract(b);
         test(e.candidates.size() == 1, "ELF extraction");
         test(e.candidates[0].code_offset == 480, "ELF offset");

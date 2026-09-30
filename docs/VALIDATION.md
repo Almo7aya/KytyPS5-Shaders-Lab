@@ -29,13 +29,19 @@ is added; use the test output from your build as the authoritative result.
 - Known hash vectors, malformed headers, truncated/overflowing ELF sections and ambiguous pairs.
 - Clear SELF segment reconstruction and rejection of unsupported encrypted segments.
 - Bounded Zstandard payload extraction when enabled.
+- ZIP stored/Deflate members, optional data-descriptor signatures, CRC failures,
+  encryption notices, hostile member names, nested archives and explicit ZIP64 gaps.
+- Multi-context campaigns, per-context resume, invalid plans and context-dependent failures.
+- Exact recorded output comparisons, float32 policies, image layouts, identity mismatches
+  and evidence containment. These are comparator tests, not GPU conformance tests.
 - Duplicate origins, incremental scan reuse and shader-hash lookup.
 - Worker protocol, resumable results, failure isolation and timeout termination.
 - Report data joins, empty/extraction-only datasets and unknown/unmatched outcomes.
 - HTML/script escaping, malformed UTF-8, exact 64-bit origin offsets and safe artifact URLs.
 
-Windows x64 builds are tested with clang-cl and Ninja. Linux implementations are present but
-have not received equivalent build/runtime validation.
+Windows x64 builds are tested with clang-cl and Ninja. GitHub Actions also builds and runs
+the lightweight fixture suite on Linux. New development-branch checks require a successful
+run at that commit before being treated as validated; inspect the job results, not just this list.
 
 ## Report review checklist
 

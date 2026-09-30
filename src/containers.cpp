@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cstring>
 #include <set>
+#include <optional>
+#include <zlib.h>
 #ifdef SL_HAVE_ZSTD
 #include <zstd.h>
 #endif
@@ -13,8 +15,190 @@ struct ContainerBudget {
     uint64_t expanded = 0;
     size_t frames = 0;
 };
+Extraction extract_layer(Bytes bytes, size_t limit, ContainerBudget &budget, unsigned depth);
+
+// ZIP layout: PKWARE APPNOTE 6.3.10, sections 4.3.7, 4.3.12 and 4.3.16.
+// Central-directory sizes allow streamed members (bit 3) without guessing where
+// compressed bytes end. No archive path is ever used for filesystem writes.
+std::optional<size_t> zip_end(Bytes bytes) {
+    if (bytes.size() < 22) return {};
+    const size_t first = bytes.size() > 65557 ? bytes.size() - 65557 : 0;
+    for (size_t pos = bytes.size() - 22;; --pos) {
+        if (integer(bytes, pos, 4) == 0x06054b50 &&
+            integer(bytes, pos + 20, 2) == bytes.size() - pos - 22)
+            return pos;
+        if (pos == first) break;
+    }
+    return {};
+}
+std::string member_label(Bytes name) {
+    std::string result;
+    for (auto byte : name) {
+        if (byte >= 32 && byte < 127 && byte != '\\') result += char(byte);
+        else result += "\\x" + hex(byte, 2);
+    }
+    return result;
+}
+Extraction extract_zip(Bytes bytes, size_t end, size_t limit, ContainerBudget &budget, unsigned depth) {
+    Extraction out;
+    auto note = [&](const char *kind, uint64_t offset, const json &extra = json::object()) {
+        json value = {{"kind", kind}, {"adapter", "zip/1"}, {"offset", offset}};
+        value.update(extra);
+        out.findings.push_back(std::move(value));
+    };
+    note("zip_archive_detected", end);
+    try {
+        if (integer(bytes, end + 4, 2) || integer(bytes, end + 6, 2) ||
+            integer(bytes, end + 8, 2) != integer(bytes, end + 10, 2)) {
+            note("unsupported_zip_multidisk", end);
+            return out;
+        }
+        auto count = integer(bytes, end + 10, 2), length = integer(bytes, end + 12, 4),
+             start = integer(bytes, end + 16, 4);
+        if (count == 0xffff || length == UINT32_MAX || start == UINT32_MAX ||
+            (end >= 20 && integer(bytes, end - 20, 4) == 0x07064b50)) {
+            note("unsupported_zip64", end);
+            return out;
+        }
+        if (!contains(bytes, start, length) || start > end || length != end - start)
+            throw std::runtime_error("invalid ZIP central-directory extent");
+        auto pos = start;
+        std::vector<std::pair<uint64_t, uint64_t>> ranges;
+        for (uint64_t member = 0; member < count; ++member) {
+            if (++budget.frames > 4096) {
+                note("container_member_budget", pos);
+                out.limited = true;
+                return out;
+            }
+            if (!contains(bytes, pos, 46) || pos + 46 > end || integer(bytes, pos, 4) != 0x02014b50)
+                throw std::runtime_error("invalid ZIP central member header");
+            auto flags = integer(bytes, pos + 8, 2), method = integer(bytes, pos + 10, 2),
+                 crc = integer(bytes, pos + 16, 4), packed = integer(bytes, pos + 20, 4),
+                 size = integer(bytes, pos + 24, 4), names = integer(bytes, pos + 28, 2),
+                 extra = integer(bytes, pos + 30, 2), comment = integer(bytes, pos + 32, 2),
+                 disk = integer(bytes, pos + 34, 2), local = integer(bytes, pos + 42, 4);
+            auto next = pos + 46 + names + extra + comment;
+            if (next > end) throw std::runtime_error("truncated ZIP central member metadata");
+            const auto central = pos;
+            pos = next;
+            if (names > 4096) {
+                note("zip_member_name_limit", central);
+                out.limited = true;
+                continue;
+            }
+            auto name_bytes = bytes.subspan(size_t(central + 46), size_t(names));
+            json provenance = {{"member_index", member}, {"member_name", member_label(name_bytes)},
+                               {"name_encoding", "ASCII with byte escapes"}, {"local_header_offset", local},
+                               {"compressed_bytes", packed}, {"expanded_bytes", size}, {"method", method}};
+            if (flags & (1 | 0x40 | 0x2000)) {
+                note("encrypted_zip_member_unsupported", central, provenance);
+                continue;
+            }
+            if (disk || packed == UINT32_MAX || size == UINT32_MAX || local == UINT32_MAX) {
+                note("unsupported_zip64_or_multidisk_member", central, provenance);
+                continue;
+            }
+            if ((flags & ~uint64_t(0x80e)) || (method != 0 && method != 8)) {
+                note("unsupported_zip_method_or_flags", central, provenance);
+                continue;
+            }
+            if (!contains(bytes, local, 30) || local + 30 > start || integer(bytes, local, 4) != 0x04034b50)
+                throw std::runtime_error("invalid ZIP local member header");
+            auto local_names = integer(bytes, local + 26, 2), local_extra = integer(bytes, local + 28, 2);
+            auto data = local + 30 + local_names + local_extra;
+            if (data > start || packed > start - data || local_names != names ||
+                integer(bytes, local + 6, 2) != flags || integer(bytes, local + 8, 2) != method ||
+                !std::equal(name_bytes.begin(), name_bytes.end(), bytes.begin() + size_t(local + 30)))
+                throw std::runtime_error("ZIP local and central member metadata disagree");
+            auto member_end = data + packed;
+            if (flags & 8) {
+                auto descriptor = member_end;
+                // Signature is optional. The CRC itself can equal the signature,
+                // so accept the unsigned form only if all three fields agree.
+                auto valid = [&](uint64_t offset) {
+                    return offset <= start && start - offset >= 12 &&
+                           integer(bytes, offset, 4) == crc && integer(bytes, offset + 4, 4) == packed &&
+                           integer(bytes, offset + 8, 4) == size;
+                };
+                if (valid(descriptor)) member_end += 12;
+                else if (contains(bytes, descriptor, 4) && integer(bytes, descriptor, 4) == 0x08074b50 && valid(descriptor + 4))
+                    member_end += 16;
+                else throw std::runtime_error("invalid ZIP data descriptor");
+            } else if (integer(bytes, local + 14, 4) != crc || integer(bytes, local + 18, 4) != packed ||
+                       integer(bytes, local + 22, 4) != size) {
+                throw std::runtime_error("ZIP local sizes or checksum disagree");
+            }
+            for (auto [begin, finish] : ranges)
+                if (local < finish && begin < member_end)
+                    throw std::runtime_error("overlapping ZIP members");
+            ranges.emplace_back(local, member_end);
+            provenance["data_offset"] = data;
+            auto unix_type = (integer(bytes, central + 38, 4) >> 16) & 0xf000;
+            if ((!name_bytes.empty() && name_bytes.back() == '/') ||
+                (unix_type && unix_type != 0x8000)) {
+                note("zip_non_regular_member_skipped", central, provenance);
+                continue;
+            }
+            if (depth >= 4 || size > 256 * 1024 * 1024 || size > 512 * 1024 * 1024 - budget.expanded ||
+                packed > 256 * 1024 * 1024 || out.candidates.size() >= limit) {
+                note("zip_member_budget", central, provenance);
+                out.limited = true;
+                continue;
+            }
+            budget.expanded += size;
+            std::vector<uint8_t> decoded(size_t(std::max(uint64_t(1), size)), 0);
+            if (method == 0) {
+                if (size != packed) throw std::runtime_error("stored ZIP member size mismatch");
+                std::copy_n(bytes.begin() + size_t(data), size_t(size), decoded.begin());
+            } else {
+                z_stream stream{};
+                if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
+                    throw std::runtime_error("cannot initialize ZIP deflate decoder");
+                struct End { z_stream *stream; ~End() { inflateEnd(stream); } } guard{&stream};
+                stream.next_in = const_cast<Bytef *>(bytes.data() + size_t(data));
+                stream.avail_in = uInt(packed);
+                stream.next_out = decoded.data();
+                stream.avail_out = uInt(decoded.size());
+                if (inflate(&stream, Z_FINISH) != Z_STREAM_END || stream.total_in != packed || stream.total_out != size) {
+                    note("zip_deflate_failed", central, provenance);
+                    continue;
+                }
+            }
+            decoded.resize(size_t(size));
+            if (crc32(0, decoded.data(), uInt(decoded.size())) != crc) {
+                note("zip_crc_mismatch", central, provenance);
+                continue;
+            }
+            auto inner = extract_layer(decoded, limit - out.candidates.size(), budget, depth + 1);
+            auto space = "zip_member@0x" + hex(local);
+            for (auto &candidate : inner.candidates) {
+                candidate.method = "zip/" + candidate.method;
+                candidate.offset_space = space + "/" + candidate.offset_space;
+                candidate.evidence.push_back({{"adapter", "zip/1"}, {"archive_member", provenance}});
+                out.candidates.push_back(std::move(candidate));
+            }
+            for (auto &finding : inner.findings) {
+                finding["offset_space"] = space + "/" + finding.value("offset_space", "file");
+                out.findings.push_back(std::move(finding));
+            }
+            out.limited = out.limited || inner.limited;
+            note("zip_member_scanned", central, provenance);
+        }
+        if (pos != end) throw std::runtime_error("unparsed ZIP central-directory bytes");
+    } catch (const std::exception &error) {
+        note("rejected_zip", end, {{"detail", error.what()}});
+    }
+    return out;
+}
 Extraction extract_layer(Bytes bytes, size_t limit, [[maybe_unused]] ContainerBudget &budget,
                          [[maybe_unused]] unsigned depth) {
+    if (auto end = zip_end(bytes)) return extract_zip(bytes, *end, limit, budget, depth);
+    if (contains(bytes, 0, 4) && integer(bytes, 0, 4) == 0x04034b50) {
+        Extraction rejected;
+        rejected.findings.push_back({{"kind", "rejected_zip"}, {"adapter", "zip/1"},
+                                     {"detail", "missing complete central directory; no raw member fallback"}});
+        return rejected;
+    }
     auto out = extract(bytes, limit);
 #ifdef SL_HAVE_ZSTD
     // Scan independently framed Zstandard data. Unknown-size/dictionary streams

@@ -72,6 +72,8 @@ README for build prerequisites and the source-linked build configuration.
 CMake overrides `FETCHCONTENT_SOURCE_DIR_XBYAK`, `FETCHCONTENT_SOURCE_DIR_ZYDIS`,
 `FETCHCONTENT_SOURCE_DIR_ZSTD` and `FETCHCONTENT_SOURCE_DIR_ZARCHIVE_SOURCE` can
 point to their matching `dependencies/*-src` directories.
+`FETCHCONTENT_SOURCE_DIR_SL_ZLIB` selects the bundled `dependencies/sl_zlib-src` tree
+for the ZIP decoder's statically linked zlib dependency.
 
 The archive deliberately excludes Git metadata. For Kyty versions whose FFmpeg
 download selection depends on Git metadata, supply `FFMPEG_PREBUILT_DIR` explicitly

@@ -23,6 +23,9 @@ packaged binaries, checksums and corresponding sources.
   not guessed. The 256-byte alignment heuristic is retained and disclosed.
 - Clear SELF load-segment reconstruction, with original-file, ELF-file and virtual-address mappings.
   Candidate bytes must be backed by actual segments, not zero-filled holes.
+- Versioned ZIP adapter for stored/Deflate members, central-directory and streamed-descriptor
+  validation, CRC verification, nested traversal and member provenance. Members are never written
+  to paths provided by the archive.
 - Independently framed and nested Zstandard payload discovery when built with the Kyty worker dependencies.
   Shared expansion, nesting-depth, frame-count and candidate limits bound work across the input tree.
 - Existing `.header` / `.code` pairs, without requiring Python.
@@ -43,7 +46,7 @@ packaged binaries, checksums and corresponding sources.
 ## Important coverage limits
 
 “All regular files visited” is not “all shaders recovered.” Encryption, game-specific archive
-indexes, Oodle/Kraken, ZIP/7z/PSARC/Unreal container decoding, compressed SELF segments, unknown-size
+indexes, Oodle/Kraken, ZIP64/multidisk ZIP, 7z/PSARC/Unreal container decoding, compressed SELF segments, unknown-size
 or dictionary-dependent Zstandard frames, unsupported nested formats, cross-file bare-header pairing,
 patched/runtime-generated code and dynamically loaded shader libraries can leave shaders undiscovered.
 Container warnings and rejected/unpaired candidates remain in the manifest and report. Use authorized,
@@ -92,9 +95,9 @@ ctest --test-dir build --output-on-failure
 ```
 
 Without a local dependency directory, CMake fetches pinned nlohmann/json and xxHash releases.
-The lightweight build does not include Zstandard decoding. Linux process/mapping implementations
-are supplied but not yet build/runtime-verified. Do not claim cross-platform validation from the
-Windows results.
+ZIP support links pinned zlib 1.3.2 statically in both build configurations. The lightweight build
+does not include Zstandard decoding. Linux extraction/report/campaign/reference fixture checks
+run in GitHub Actions; the source-linked worker remains Windows-validated.
 
 The adapter was built against clean KytyPS5 revision
 `2650478d92c394c092b36ee129962060c623ca16`. A changed upstream API may require adapter maintenance;
@@ -150,11 +153,18 @@ the case ID in the manifest for its original file, offsets, offset coordinate sy
 Offsets in a reconstructed ELF or decompressed frame are deliberately not labeled as physical
 offsets in the original game file.
 
-Nested Zstandard scanning retains each frame's coordinate layer and versioned adapter evidence.
+Nested ZIP/Zstandard scanning retains each member/frame coordinate layer and versioned adapter evidence.
 Per input file, expansion is bounded to 512 MiB total, 256 MiB per frame, four decoded layers
 and 4,096 frame candidates across all layers. Intermediate decoded containers also consume the
 budget; it is not reset by nesting. Limit findings disclose incomplete exploration. Clear SELF
 normalization also works inside decoded frames; compressed SELF blocks still need another adapter.
+
+The `zip/1` adapter handles ZIP32 methods 0 (stored) and 8 (Deflate), with or without
+data-descriptor signatures. Local headers must agree with the central directory, and
+member CRCs must match before shader extraction. Encryption, ZIP64, multidisk layouts
+and unsupported methods produce explicit findings. Archive names are evidence labels,
+with non-ASCII bytes escaped, never output paths. Once a ZIP is recognized, rejected
+members are not scanned again as raw bytes to bypass integrity/encryption checks.
 
 ## Reading the HTML report
 

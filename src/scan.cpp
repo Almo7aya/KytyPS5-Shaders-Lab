@@ -417,13 +417,15 @@ json scan(const ScanOptions &opt) {
                     auto ext = path_text(file.extension());
                     std::transform(ext.begin(), ext.end(), ext.begin(),
                                    [](unsigned char c) { return char(std::tolower(c)); });
-                    if (ext == ".pkg" || ext == ".pak" || ext == ".ucas" || ext == ".zip" ||
+                    const bool recognized_zip = std::any_of(rec["findings"].begin(), rec["findings"].end(),
+                        [](const auto &finding) { return finding.value("adapter", "") == "zip/1"; });
+                    if (ext == ".pkg" || ext == ".pak" || ext == ".ucas" || (ext == ".zip" && !recognized_zip) ||
                         ext == ".gz" || ext == ".zst" || ext == ".zar" || ext == ".7z" ||
                         ext == ".psarc")
                         rec["findings"].push_back(
                             {{"kind", "container_coverage_gap"},
-                             {"detail", "raw bytes scanned; format-aware decompression/decryption "
-                                        "not implemented"}});
+                             {"detail", "container extension requires coverage review; only recognized "
+                                        "adapters are scanned, and unsupported encodings or encryption remain gaps"}});
                     for (const auto &c : found.candidates) {
                         auto hs = sha256(c.header), cs = sha256(c.code);
                         auto key = hs + "-" + cs;
